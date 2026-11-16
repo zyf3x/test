@@ -1,1 +1,325 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AR Object Detector</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: #080d14;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+
+header {
+    padding: 22px;
+}
+
+h2 {
+    margin: 0;
+    font-size: 24px;
+}
+
+.subtitle {
+    color: #8493a8;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+#camera {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    margin: auto;
+    overflow: hidden;
+    background: #111923;
+    line-height: 0;
+}
+
+video {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+#status {
+    color: #8ba4c4;
+    font-size: 13px;
+    padding: 15px;
+}
+
+.controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    padding: 10px;
+}
+
+button {
+    border: 0;
+    border-radius: 12px;
+    padding: 14px 22px;
+    background: #2878f0;
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+button.secondary {
+    background: #202d3e;
+}
+
+#objects {
+    padding: 15px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+}
+
+.object {
+    background: #162638;
+    border: 1px solid #294663;
+    border-radius: 20px;
+    padding: 10px 15px;
+    font-size: 13px;
+}
+
+footer {
+    padding: 20px;
+    color: #607187;
+    font-size: 12px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h2>AR Object Detector</h2>
+    <div class="subtitle">AI-powered real-time object recognition</div>
+</header>
+
+<div id="camera">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+</div>
+
+<div id="status">Loading AI model...</div>
+
+<div class="controls">
+    <button onclick="startCamera()">Start Camera</button>
+    <button class="secondary" onclick="switchCamera()">Switch Camera</button>
+</div>
+
+<h3>Detected Objects</h3>
+<div id="objects">
+    <span class="object">Waiting for camera...</span>
+</div>
+
+<footer>
+    Powered by TensorFlow.js and COCO-SSD
+</footer>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const statusText = document.getElementById("status");
+const objectsDiv = document.getElementById("objects");
+
+let model = null;
+let stream = null;
+let facingMode = "environment";
+let running = false;
+let detecting = false;
+
+async function loadModel() {
+    try {
+        statusText.textContent = "Loading AI model...";
+
+        await tf.ready();
+
+        model = await cocoSsd.load({
+            base: "lite_mobilenet_v2"
+        });
+
+        statusText.textContent = "AI ready. Start your camera!";
+    } catch (error) {
+        statusText.textContent = "Could not load AI model.";
+        console.error(error);
+    }
+}
+
+async function startCamera() {
+    if (!model) {
+        statusText.textContent = "Please wait for AI model to load.";
+        return;
+    }
+
+    stopCamera();
+
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: facingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+
+        await video.play();
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        running = true;
+
+        statusText.textContent = "Scanning environment...";
+        detectObjects();
+
+    } catch (error) {
+        statusText.textContent =
+            "Camera error. Allow camera permissions and try again.";
+
+        console.error(error);
+    }
+}
+
+function stopCamera() {
+    running = false;
+
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+
+    video.srcObject = null;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+async function switchCamera() {
+    facingMode =
+        facingMode === "environment" ? "user" : "environment";
+
+    if (running) {
+        await startCamera();
+    }
+}
+
+async function detectObjects() {
+    if (!running || detecting) return;
+
+    detecting = true;
+
+    try {
+        const predictions = await model.detect(video);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const found = [];
+
+        predictions.forEach(prediction => {
+
+            if (prediction.score < 0.50) return;
+
+            const [x, y, width, height] = prediction.bbox;
+
+            const name = prediction.class;
+            const confidence = Math.round(prediction.score * 100);
+
+            // Tracking rectangle
+            ctx.strokeStyle = "#00ffae";
+            ctx.lineWidth = Math.max(3, canvas.width / 350);
+            ctx.strokeRect(x, y, width, height);
+
+            // Label background
+            const label = name + " " + confidence + "%";
+
+            ctx.font = "bold 18px Arial";
+
+            const labelWidth = ctx.measureText(label).width + 16;
+
+            ctx.fillStyle = "#00d99a";
+
+            ctx.fillRect(
+                x,
+                Math.max(0, y - 32),
+                labelWidth,
+                30
+            );
+
+            // Label text
+            ctx.fillStyle = "#001b14";
+
+            ctx.fillText(
+                label,
+                x + 8,
+                Math.max(21, y - 11)
+            );
+
+            found.push({
+                name: name,
+                confidence: confidence
+            });
+        });
+
+        // Update detected objects
+        const unique = [...new Set(found.map(o => o.name))];
+
+        if (unique.length > 0) {
+            objectsDiv.innerHTML = unique.map(name => {
+                const item = found.find(o => o.name === name);
+
+                return `<span class="object">
+                    ${name} · ${item.confidence}%
+                </span>`;
+            }).join("");
+        } else {
+            objectsDiv.innerHTML =
+                '<span class="object">No objects detected</span>';
+        }
+
+        statusText.textContent =
+            `Scanning · ${unique.length} object types detected`;
+
+    } catch (error) {
+        console.error(error);
+    }
+
+    detecting = false;
+
+    if (running) {
+        setTimeout(detectObjects, 100);
+    }
+}
+
+loadModel();
+</script>
+
+</body>
+</html>
