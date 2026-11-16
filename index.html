@@ -63,7 +63,7 @@
       width: 100%;
       height: 100%;
       z-index: 2;
-      pointer-events: none;
+      touch-action: none;
     }
 
     /* Fullscreen Fingertip & Pinch Tracking Overlay Canvas */
@@ -401,12 +401,14 @@
         Checking device AR & camera capabilities...
       </div>
 
+      <div id="start-error-box" class="hidden text-xs text-rose-200 bg-rose-950/80 border border-rose-500/40 rounded-xl p-3 leading-relaxed"></div>
+
       <div class="flex flex-col gap-2.5">
-        <button id="btn-launch-ar" class="w-full py-3.5 px-5 rounded-2xl font-bold text-sm text-slate-950 bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 hover:brightness-110 active:scale-[0.98] transition shadow-[0_0_25px_rgba(56,189,248,0.45)]">
+        <button id="btn-launch-ar" type="button" class="w-full py-3.5 px-5 rounded-2xl font-bold text-sm text-slate-950 bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 hover:brightness-110 active:scale-[0.98] transition shadow-[0_0_25px_rgba(56,189,248,0.45)] cursor-pointer">
           Start Back-Camera AR Studio
         </button>
 
-        <button id="btn-launch-webxr" class="hidden w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-cyan-200 bg-white/10 hover:bg-white/15 active:scale-[0.98] transition">
+        <button id="btn-launch-webxr" type="button" class="hidden w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-cyan-200 bg-white/10 hover:bg-white/15 active:scale-[0.98] transition cursor-pointer">
           Experimental WebXR 6DOF Mode (No Hand Camera on Some Phones)
         </button>
       </div>
@@ -427,7 +429,11 @@
       arMode: 'none', // 'webxr' | 'sensor'
       isPinching: false,
       isTouchDrawing: false,
+      isCanvasDragging: false,
+      touchNdcX: 0,
+      touchNdcY: 0,
       handDetected: false,
+      handEngineStatus: 'loading', // 'loading' | 'ready' | 'unavailable'
       lastHandSeenTime: 0,
       occlusionGraceFrames: 0,
       livePinchRatio: 1.0,
@@ -439,6 +445,7 @@
       glowEnabled: true,
       glowIntensity: 1.0,
       drawDepth: 0.45,        // meters in front of camera
+      smoothingFactor: 0.45,
       // Tuned Back-Camera Pinch Hysteresis Thresholds (generous multi-metric ratio)
       pinchStartThreshold: 0.52,
       pinchReleaseThreshold: 0.68,
@@ -460,6 +467,7 @@
     const handOverlayCtx = handOverlayCanvas.getContext('2d');
     const startScreen = document.getElementById('start-screen');
     const capabilityBadge = document.getElementById('capability-badge');
+    const startErrorBox = document.getElementById('start-error-box');
     const btnLaunchAR = document.getElementById('btn-launch-ar');
     const btnLaunchWebXR = document.getElementById('btn-launch-webxr');
 
@@ -484,6 +492,11 @@
       toastTimeout = setTimeout(() => {
         toastBanner.classList.add('hidden');
       }, duration);
+    }
+
+    function showStartError(message) {
+      startErrorBox.textContent = message;
+      startErrorBox.classList.remove('hidden');
     }
 
     /**
@@ -1017,34 +1030,70 @@
     let smoothedHandDepthScale = 0;
     let smoothedPinchMetric = 1.0;
 
-    // Square 320x320 offscreen buffer with letterbox padding metadata (prevents portrait distortion!)
+    // Square 256x256 offscreen buffer with letterbox padding metadata (fast mobile inference + zero portrait distortion)
     const inferCanvas = document.createElement('canvas');
-    inferCanvas.width = 320;
-    inferCanvas.height = 320;
+    inferCanvas.width = 256;
+    inferCanvas.height = 256;
     const inferCtx = inferCanvas.getContext('2d', { willReadFrequently: false });
     const inferTransform = { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 };
 
-    function initMediaPipeHands() {
+    function withTimeout(promise, ms, label) {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+        )
+      ]);
+    }
+
+    async function initMediaPipeHandsAsync() {
+      state.handEngineStatus = 'loading';
+      updateTrackingHUD();
+
+      // Wait briefly if CDN script is still parsing
+      let waitAttempts = 0;
+      while (typeof window.Hands === 'undefined' && waitAttempts < 25) {
+        await new Promise((r) => setTimeout(r, 200));
+        waitAttempts++;
+      }
+
       if (typeof window.Hands === 'undefined') {
-        showToast('Hand tracker offline — use Hold to Draw button');
+        state.handEngineStatus = 'unavailable';
+        updateTrackingHUD();
+        showToast('Hand AI offline — touch screen or Hold to Draw');
         return;
       }
 
-      mpHands = new window.Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
-      });
+      try {
+        mpHands = new window.Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+        });
 
-      // Tuned for back-camera hands in portrait & landscape orientation
-      mpHands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 1,
-        selfieMode: false,
-        minDetectionConfidence: 0.35,
-        minTrackingConfidence: 0.35
-      });
+        // Fast Lite model (modelComplexity: 0) tuned for back-camera hands in portrait & landscape
+        mpHands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 0,
+          selfieMode: false,
+          minDetectionConfidence: 0.45,
+          minTrackingConfidence: 0.45
+        });
 
-      mpHands.onResults(onHandResults);
-      startHandInferenceLoop();
+        mpHands.onResults(onHandResults);
+
+        // Warm up WASM graph in background with timeout protection so it never hangs
+        if (typeof mpHands.initialize === 'function') {
+          await withTimeout(mpHands.initialize(), 12000, 'MediaPipe Hands WASM');
+        }
+
+        state.handEngineStatus = 'ready';
+        updateTrackingHUD();
+        startHandInferenceLoop();
+      } catch (err) {
+        console.warn('MediaPipe Hands background init warning:', err);
+        state.handEngineStatus = 'unavailable';
+        updateTrackingHUD();
+        showToast('Hand AI unavailable — drag screen or Hold to Draw');
+      }
     }
 
     /**
@@ -1057,7 +1106,7 @@
           try {
             const vw = videoEl.videoWidth;
             const vh = videoEl.videoHeight;
-            const size = 320;
+            const size = inferCanvas.width;
 
             inferCtx.fillStyle = '#000000';
             inferCtx.fillRect(0, 0, size, size);
@@ -1081,12 +1130,12 @@
             inferTransform.scaleY = drawH / size;
 
             inferCtx.drawImage(videoEl, offX, offY, drawW, drawH);
-            await mpHands.send({ image: inferCanvas });
+            await withTimeout(mpHands.send({ image: inferCanvas }), 2500, 'Hand frame');
           } catch (e) {
             isProcessingHandFrame = false;
           }
         }
-        setTimeout(stepInference, 10);
+        setTimeout(stepInference, 12);
       };
       stepInference();
     }
@@ -1336,18 +1385,26 @@
     }
 
     function updateTrackingHUD() {
-      if (state.isPinching || state.isTouchDrawing) {
+      if (state.isPinching || state.isTouchDrawing || state.isCanvasDragging) {
         statusDot.className = 'relative w-3 h-3 rounded-full bg-emerald-400 pinch-pulse shrink-0';
-        pinchStatusText.textContent = 'PINCHED — Drawing 3D Stroke!';
+        pinchStatusText.textContent = 'DRAWING — 3D Spatial Stroke Active!';
         pinchStatusText.className = 'text-xs font-bold text-emerald-300';
       } else if (state.handDetected) {
         const pct = Math.round(Math.max(0, Math.min(99, (1 - (state.livePinchRatio - state.pinchStartThreshold) / 0.5) * 100)));
         statusDot.className = 'relative w-3 h-3 rounded-full bg-cyan-400 shrink-0';
         pinchStatusText.textContent = `Hand Ready (${pct}%) — Touch Fingers`;
         pinchStatusText.className = 'text-xs font-medium text-cyan-200';
+      } else if (state.handEngineStatus === 'loading') {
+        statusDot.className = 'relative w-3 h-3 rounded-full bg-sky-400 animate-pulse shrink-0';
+        pinchStatusText.textContent = 'Loading hand AI... (Touch screen to draw)';
+        pinchStatusText.className = 'text-xs font-medium text-sky-200';
+      } else if (state.handEngineStatus === 'unavailable') {
+        statusDot.className = 'relative w-3 h-3 rounded-full bg-amber-400 shrink-0';
+        pinchStatusText.textContent = 'Touch Screen or Hold Button to Draw';
+        pinchStatusText.className = 'text-xs font-medium text-slate-200';
       } else {
         statusDot.className = 'relative w-3 h-3 rounded-full bg-amber-400 shrink-0';
-        pinchStatusText.textContent = 'Show Hand or Hold Draw Button';
+        pinchStatusText.textContent = 'Show Hand, Drag Screen, or Hold Draw';
         pinchStatusText.className = 'text-xs font-medium text-slate-200';
       }
     }
@@ -1418,31 +1475,83 @@
       camera.position.lerp(sensorPosition, 0.25);
     }
 
-    async function startBackCameraStream() {
+    async function playVideoSafely(video) {
+      video.setAttribute('playsinline', '');
+      video.setAttribute('autoplay', '');
+      video.setAttribute('muted', '');
+      video.muted = true;
+
+      if (video.readyState < 1) {
+        await Promise.race([
+          new Promise((resolve) => {
+            video.onloadedmetadata = () => resolve();
+          }),
+          new Promise((resolve) => setTimeout(resolve, 1500))
+        ]);
+      }
+
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 960 },
-            height: { ideal: 540 },
-            frameRate: { ideal: 60, min: 30 }
-          }
-        });
-        videoEl.srcObject = stream;
-        await videoEl.play();
-        return true;
-      } catch (err) {
-        console.warn('Back camera getUserMedia error:', err);
-        showToast('Camera permission needed for hand tracking');
-        return false;
+        await withTimeout(video.play(), 2500, 'Video playback');
+      } catch (playErr) {
+        console.warn('video.play() retry:', playErr);
       }
     }
 
-    // Check WebXR Support on Load
-    let webXRSupported = false;
-    (async function checkARCapabilities() {
-      if ('xr' in navigator) {
+    async function startBackCameraStream() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const msg = window.isSecureContext
+          ? 'Camera API is unavailable in this browser.'
+          : 'Camera requires HTTPS or localhost. Please open this page over HTTPS.';
+        showStartError(msg);
+        showToast(msg, 4000);
+        return false;
+      }
+
+      const constraintTiers = [
+        {
+          audio: false,
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        },
+        {
+          audio: false,
+          video: { facingMode: 'environment' }
+        },
+        {
+          audio: false,
+          video: true
+        }
+      ];
+
+      let lastErr = null;
+      for (const constraints of constraintTiers) {
+        try {
+          const stream = await withTimeout(
+            navigator.mediaDevices.getUserMedia(constraints),
+            8000,
+            'Camera access'
+          );
+          videoEl.srcObject = stream;
+          await playVideoSafely(videoEl);
+          return true;
+        } catch (err) {
+          lastErr = err;
+          // If user explicitly denied camera permission, don't retry further tiers
+          if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+            break;
+          }
+        }
+      }
+
+      const reason = lastErr ? `${lastErr.name || 'Error'}: ${lastErr.message || 'Permission denied'}` : 'Camera unavailable';
+      showStartError(`Could not open camera (${reason}). Check browser camera permissions and reload.`);
+      showToast('Camera blocked or unavailable', 3500);
+      return false;
+    }
+
     // Check WebXR Support on Load (Default to Back-Camera + Gyro AR so <video> always feeds MediaPipe!)
     let webXRSupported = false;
     (async function checkARCapabilities() {
@@ -1454,7 +1563,12 @@
         }
       }
 
-      capabilityBadge.innerHTML = '<span class="text-emerald-300 font-semibold">✓ Live Back-Camera Hand Pinch + Spatial 3D AR Ready</span>';
+      if (!window.isSecureContext) {
+        capabilityBadge.innerHTML = '<span class="text-amber-300 font-semibold">⚠ HTTPS Required for Mobile Camera & Motion Sensors</span>';
+      } else {
+        capabilityBadge.innerHTML = '<span class="text-emerald-300 font-semibold">✓ Live Back-Camera Hand Pinch + Spatial 3D AR Ready</span>';
+      }
+
       if (webXRSupported) {
         btnLaunchWebXR.classList.remove('hidden');
       }
@@ -1465,14 +1579,20 @@
      */
     async function launchWebXR() {
       try {
-        initMediaPipeHands();
+        startErrorBox.classList.add('hidden');
+        btnLaunchWebXR.disabled = true;
+
         await startBackCameraStream();
 
-        const session = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['local'],
-          optionalFeatures: ['dom-overlay', 'hit-test'],
-          domOverlay: { root: document.getElementById('ar-overlay') }
-        });
+        const session = await withTimeout(
+          navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['local'],
+            optionalFeatures: ['dom-overlay', 'hit-test'],
+            domOverlay: { root: document.getElementById('ar-overlay') }
+          }),
+          6000,
+          'WebXR session'
+        );
 
         renderer.xr.setReferenceSpaceType('local');
         await renderer.xr.setSession(session);
@@ -1483,55 +1603,95 @@
         state.isRunning = true;
         trackingModeLabel.textContent = 'WebXR 6DOF AR';
         startScreen.classList.add('hidden');
+        renderer.setAnimationLoop(renderFrame);
+        initMediaPipeHandsAsync();
         showToast('WebXR active! If hand tracking pauses, use Sensor AR.');
 
         session.addEventListener('end', () => {
           state.isRunning = false;
+          btnLaunchWebXR.disabled = false;
           videoEl.style.opacity = '1';
           startScreen.classList.remove('hidden');
         });
-
-        renderer.setAnimationLoop(renderFrame);
       } catch (err) {
         console.warn('WebXR launch fallback to Sensor AR:', err);
+        btnLaunchWebXR.disabled = false;
         launchSensorAR();
       }
     }
 
     /**
-     * Launch Primary Back-Camera + Gyroscope AR Mode (Guaranteed 60fps Video Frames for Hand Pinch!)
+     * Launch Primary Back-Camera + Gyroscope AR Mode
+     * IMPORTANT: Request iOS DeviceOrientation/Motion permissions synchronously BEFORE any await!
      */
-    async function launchSensorAR() {
-      initMediaPipeHands();
+    function launchSensorAR() {
+      startErrorBox.classList.add('hidden');
+      btnLaunchAR.disabled = true;
+      const originalBtnText = btnLaunchAR.textContent;
+      btnLaunchAR.textContent = 'Starting Camera & AR...';
 
-      // Request iOS 13+ Motion & Orientation permissions if required
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-          await DeviceOrientationEvent.requestPermission();
-        } catch (e) {
-          console.warn('Orientation permission declined:', e);
+      // 1. Fire iOS 13+ permission prompts synchronously inside the click gesture before any await!
+      let orientationPermPromise = Promise.resolve();
+      let motionPermPromise = Promise.resolve();
+
+      try {
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          orientationPermPromise = DeviceOrientationEvent.requestPermission().catch((e) => {
+            console.warn('Orientation permission declined:', e);
+          });
         }
+      } catch (e) {
+        console.warn('Orientation request error:', e);
       }
-      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try {
-          await DeviceMotionEvent.requestPermission();
-        } catch (e) {
-          console.warn('Motion permission declined:', e);
+
+      try {
+        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+          motionPermPromise = DeviceMotionEvent.requestPermission().catch((e) => {
+            console.warn('Motion permission declined:', e);
+          });
         }
+      } catch (e) {
+        console.warn('Motion request error:', e);
       }
 
-      setupDeviceOrientationTracking();
-      const camOk = await startBackCameraStream();
-      if (!camOk) return;
+      // 2. Continue async startup with guaranteed UI recovery on failure
+      (async () => {
+        try {
+          await Promise.allSettled([
+            withTimeout(orientationPermPromise, 4000, 'Orientation permission'),
+            withTimeout(motionPermPromise, 4000, 'Motion permission')
+          ]);
 
-      videoEl.style.opacity = '1';
-      state.arMode = 'sensor';
-      state.isRunning = true;
-      trackingModeLabel.textContent = 'Back-Cam + Spatial 3D';
-      startScreen.classList.add('hidden');
-      showToast('Hold hand in view & touch Index + Thumb to draw!');
+          setupDeviceOrientationTracking();
 
-      renderer.setAnimationLoop(renderFrame);
+          const camOk = await startBackCameraStream();
+          if (!camOk) {
+            btnLaunchAR.disabled = false;
+            btnLaunchAR.textContent = originalBtnText;
+            return;
+          }
+
+          // Launch live AR canvas & HUD immediately without waiting for MediaPipe WASM!
+          videoEl.style.opacity = '1';
+          state.arMode = 'sensor';
+          state.isRunning = true;
+          trackingModeLabel.textContent = 'Back-Cam + Spatial 3D';
+          startScreen.classList.add('hidden');
+          btnLaunchAR.disabled = false;
+          btnLaunchAR.textContent = originalBtnText;
+
+          renderer.setAnimationLoop(renderFrame);
+          showToast('Pinch Index + Thumb, drag screen, or Hold to Draw!');
+
+          // Load & start MediaPipe Hands asynchronously in the background
+          initMediaPipeHandsAsync();
+        } catch (err) {
+          console.error('AR startup error:', err);
+          btnLaunchAR.disabled = false;
+          btnLaunchAR.textContent = originalBtnText;
+          showStartError(`Startup failed: ${err && err.message ? err.message : 'Unknown error'}`);
+        }
+      })();
     }
 
     /**
@@ -1542,6 +1702,7 @@
     let wasDrawingLastFrame = false;
     const _camPos = new THREE.Vector3();
     const _camDir = new THREE.Vector3();
+    const _touchRay = new THREE.Vector3();
 
     function renderFrame() {
       if (!state.isRunning) return;
@@ -1551,12 +1712,17 @@
         updateSensorCameraPose();
       }
 
-      // 2. Determine Active 3D Cursor Position (Hand Pinch vs. Manual Hold-to-Draw Reticle)
+      // 2. Determine Active 3D Cursor Position (Direct Touch Drag > Hand Pinch > Hold-to-Draw Reticle)
       const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
       let cursorWorldPos = null;
       const handRecentlySeen = state.handDetected && (performance.now() - state.lastHandSeenTime < 450);
 
-      if (handRecentlySeen && smoothedCursorWorld && !state.isTouchDrawing) {
+      if (state.isCanvasDragging) {
+        activeCam.getWorldPosition(_camPos);
+        _touchRay.set(state.touchNdcX, state.touchNdcY, 0.5).unproject(activeCam);
+        _camDir.subVectors(_touchRay, _camPos).normalize();
+        cursorWorldPos = _camPos.addScaledVector(_camDir, state.drawDepth);
+      } else if (handRecentlySeen && smoothedCursorWorld && !state.isTouchDrawing) {
         cursorWorldPos = smoothedCursorWorld;
       } else {
         activeCam.getWorldPosition(_camPos);
@@ -1570,7 +1736,7 @@
         cursorGroup.position.copy(cursorWorldPos);
         cursorGroup.quaternion.copy(activeCam.quaternion);
 
-        const isDrawingNow = (handRecentlySeen && state.isPinching) || state.isTouchDrawing;
+        const isDrawingNow = (handRecentlySeen && state.isPinching) || state.isTouchDrawing || state.isCanvasDragging;
         cursorCoreMat.color.set(isDrawingNow ? '#10b981' : state.color);
 
         const targetScale = isDrawingNow ? Math.max(0.8, state.brushSize / 0.008) : 1.0;
@@ -1613,6 +1779,39 @@
      */
     btnLaunchAR.addEventListener('click', launchSensorAR);
     btnLaunchWebXR.addEventListener('click', launchWebXR);
+
+    // Direct Touch / Pointer Drag Drawing on 3D AR Canvas (works from frame 1!)
+    function updateTouchNdcFromEvent(e) {
+      const rect = canvasEl.getBoundingClientRect();
+      state.touchNdcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      state.touchNdcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    canvasEl.addEventListener('pointerdown', (e) => {
+      if (!state.isRunning) return;
+      updateTouchNdcFromEvent(e);
+      state.isCanvasDragging = true;
+      if (canvasEl.setPointerCapture) {
+        try { canvasEl.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+      updateTrackingHUD();
+    });
+
+    canvasEl.addEventListener('pointermove', (e) => {
+      if (!state.isCanvasDragging) return;
+      updateTouchNdcFromEvent(e);
+    });
+
+    const stopCanvasDrag = (e) => {
+      if (!state.isCanvasDragging) return;
+      state.isCanvasDragging = false;
+      if (e && canvasEl.releasePointerCapture) {
+        try { canvasEl.releasePointerCapture(e.pointerId); } catch (_) {}
+      }
+      updateTrackingHUD();
+    };
+    canvasEl.addEventListener('pointerup', stopCanvasDrag);
+    canvasEl.addEventListener('pointercancel', stopCanvasDrag);
 
     // Color Swatches
     const swatchBtns = document.querySelectorAll('.swatch-btn');
