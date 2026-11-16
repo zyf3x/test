@@ -3,32 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#000">
 <title>Battery Drainer</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
-  html,body{height:100%;background:#000;overflow:hidden;
-    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#9dff6b;
-    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#000;overflow:hidden;color:#9dff6b;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-user-select:none;user-select:none}
   #gl,#fx{position:fixed;inset:0;width:100%;height:100%;display:block}
-  #fx{opacity:.5;mix-blend-mode:screen;pointer-events:none}
-  .hud{position:fixed;top:0;left:0;right:0;padding:14px 16px;display:flex;gap:14px;flex-wrap:wrap;
-    align-items:baseline;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
-    background:linear-gradient(#000d,#0000);pointer-events:none;z-index:5}
-  .k{opacity:.45}
-  .v{color:#e8ffe0;font-weight:700}
-  .bomb{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);font-size:10px;
-    letter-spacing:.3em;text-transform:uppercase;opacity:.3;z-index:5;pointer-events:none;
-    text-align:center;width:90%}
-  #tap{position:fixed;inset:0;display:grid;place-items:center;z-index:10;cursor:pointer;
-    background:#000c;transition:opacity .5s}
-  #tap div{font-size:13px;letter-spacing:.25em;text-transform:uppercase;color:#fff;
-    border:1px solid #9dff6b55;padding:16px 26px;animation:pulse 1.6s infinite}
-  @keyframes pulse{50%{opacity:.3}}
-  #stop{position:fixed;right:14px;bottom:14px;z-index:20;background:#111;color:#9dff6b;
-    border:1px solid #9dff6b44;padding:8px 14px;font:inherit;font-size:11px;letter-spacing:.15em;
-    text-transform:uppercase;cursor:pointer}
-  #stop:hover{background:#1a1a1a}
+  #fx{opacity:.45;mix-blend-mode:screen;pointer-events:none}
+  .hud{position:fixed;top:0;left:0;right:0;padding:12px 14px;display:flex;gap:12px;flex-wrap:wrap;
+    font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    background:linear-gradient(#000e,#0000);pointer-events:none;z-index:5}
+  .k{opacity:.4}.v{color:#e8ffe0;font-weight:700}
+  #stat{position:fixed;left:12px;bottom:12px;font-size:10px;letter-spacing:.1em;
+    line-height:1.9;text-transform:uppercase;z-index:5;pointer-events:none;opacity:.75}
+  #stat b{color:#e8ffe0;font-weight:700}
+  #stat .off{color:#ff5d5d}
+  #stop{position:fixed;right:12px;bottom:12px;z-index:20;background:#111;color:#9dff6b;
+    border:1px solid #9dff6b44;padding:8px 14px;font:inherit;font-size:11px;
+    letter-spacing:.15em;text-transform:uppercase;cursor:pointer}
 </style>
 </head>
 <body>
@@ -36,128 +29,137 @@
 <canvas id="fx"></canvas>
 
 <div class="hud">
-  <span><span class="k">battery</span> <span class="v" id="lvl">--%</span></span>
+  <span><span class="k">bat</span> <span class="v" id="lvl">--%</span></span>
   <span><span class="k">drain</span> <span class="v" id="rate">--</span></span>
   <span><span class="k">left</span> <span class="v" id="left">--</span></span>
-  <span><span class="k">threads</span> <span class="v" id="thr">0</span></span>
   <span><span class="k">ops/s</span> <span class="v" id="ops">0</span></span>
-  <span><span class="k">elapsed</span> <span class="v" id="el">0s</span></span>
+  <span><span class="k">fps</span> <span class="v" id="fps">0</span></span>
+  <span><span class="k">t</span> <span class="v" id="el">0s</span></span>
 </div>
 
-<div class="bomb">device will get hot &middot; fan will spin &middot; battery will drop</div>
+<div id="stat"></div>
 <button id="stop">stop</button>
-<div id="tap"><div>tap to arm audio</div></div>
 
 <script>
 (function () {
   "use strict";
-  var $ = function (id) { return document.getElementById(id); };
-  var running = true;
-  var workers = [], timers = [], wakeLock = null, actx = null;
-  var opsMain = 0, opsWorkers = 0, lastOps = 0, lastOpsT = performance.now();
-  var startT = performance.now();
 
-  /* ---------------- GPU furnace (full-screen fractal, 512 iterations/pixel) ---------------- */
-  var glc = $("gl");
-  var gl = glc.getContext("webgl", {
-    antialias: false, alpha: false, depth: false, stencil: false,
-    powerPreference: "high-performance", desynchronized: true, preserveDrawingBuffer: false
-  });
+  var S = { gpu: false, cpu: false, workers: 0, audio: false, wake: false, bat: false };
+  var running = true, actx = null, wakeLock = null;
+  var workers = [], timers = [], rafIds = [];
+  var opsMain = 0, opsWk = 0, opsSeen = 0, opsT = performance.now();
+  var frames = 0, fps = 0, t0 = performance.now();
 
-  var uni = { res: null, t: null }, rafId = 0, vbo = null, prog = null;
+  function $(id) { return document.getElementById(id); }
+  function safe(fn) { try { fn(); return true; } catch (e) { return false; } }
+
+  function paintStat() {
+    var rows = [
+      ["GPU", S.gpu, true],
+      ["CPU", S.cpu, true],
+      ["THREADS", S.workers, S.workers > 0],
+      ["AUDIO", S.audio ? "ON" : "OFF", S.audio],
+      ["SCREEN", S.wake ? "HELD" : "OFF", S.wake],
+      ["BATTERY API", S.bat ? "ON" : "N/A", S.bat]
+    ];
+    var h = "";
+    for (var i = 0; i < rows.length; i++) {
+      var on = rows[i][2];
+      h += '<span class="' + (on ? "" : "off") + '">' + rows[i][0] + " <b>" +
+           (rows[i][1] === true ? "OK" : rows[i][1]) + "</b></span><br>";
+    }
+    $("stat").innerHTML = h;
+  }
+
+  /* ---------- GPU ---------- */
+  var glc = $("gl"), gl = null, prog = null, uni = {}, frameN = 0;
 
   var VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
   var FS = [
-    "precision highp float;",
-    "uniform vec2 res;uniform float t;",
+    "precision highp float;uniform vec2 res;uniform float t;",
     "void main(){",
-    "  vec2 uv=(gl_FragCoord.xy-0.5*res)/res.y;",
-    "  vec2 c=uv*1.7-vec2(0.95,0.28);",
-    "  vec2 z=vec2(0.0);",
-    "  float it=0.0;",
-    "  for(int i=0;i<512;i++){",
-    "    z=vec2(z.x*z.x-z.y*z.y,2.0*z.x*z.y)+c+0.012*vec2(sin(t*0.9),cos(t*1.3));",
-    "    if(dot(z,z)>64.0) break;",
-    "    it+=1.0;",
-    "  }",
-    "  float m=it/512.0;",
-    "  vec3 col=vec3(m*0.9,m*m*1.15,sqrt(m)*0.85);",
-    "  for(int k=0;k<12;k++){ col+=0.018*sin(vec3(t*0.6+float(k)*1.7+uv.xyx*22.0)); }",
-    "  col+=0.06*vec3(uv.x+0.5,uv.y+0.5,0.6);",
-    "  gl_FragColor=vec4(col,1.0);",
+    " vec2 uv=(gl_FragCoord.xy-0.5*res)/res.y;",
+    " vec2 c=uv*1.7-vec2(0.95,0.28);",
+    " vec2 z=vec2(0.0);float it=0.0;",
+    " for(int i=0;i<512;i++){",
+    "  z=vec2(z.x*z.x-z.y*z.y,2.0*z.x*z.y)+c+0.012*vec2(sin(t*0.9),cos(t*1.3));",
+    "  if(dot(z,z)>64.0)break; it+=1.0;",
+    " }",
+    " float m=it/512.0;",
+    " vec3 col=vec3(m*0.9,m*m*1.15,sqrt(m)*0.85);",
+    " for(int k=0;k<12;k++){col+=0.018*sin(vec3(t*0.6+float(k)*1.7+uv.xyx*22.0));}",
+    " col+=0.06*vec3(uv.x+0.5,uv.y+0.5,0.6);",
+    " gl_FragColor=vec4(col,1.0);",
     "}"
   ].join("\n");
 
-  function shader(type, src) {
-    var s = gl.createShader(type);
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(s));
-    return s;
+  function sh(t, s) {
+    var o = gl.createShader(t);
+    gl.shaderSource(o, s); gl.compileShader(o);
+    return o;
   }
 
   function initGL() {
-    if (!gl) return;
+    gl = glc.getContext("webgl", { antialias: false, alpha: false, depth: false,
+      powerPreference: "high-performance", desynchronized: true });
+    if (!gl) return false;
     prog = gl.createProgram();
-    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
-    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
     gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
     gl.useProgram(prog);
-
-    vbo = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    var b = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
     var loc = gl.getAttribLocation(prog, "p");
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
     uni.res = gl.getUniformLocation(prog, "res");
     uni.t = gl.getUniformLocation(prog, "t");
     resizeGL();
+    return true;
   }
 
   function resizeGL() {
     if (!gl) return;
-    var dpr = Math.min(window.devicePixelRatio || 1, 3);
-    var s = 1.4; // supersample: more pixels = more work
-    var w = Math.min(Math.floor(innerWidth * dpr * s), 4096);
-    var h = Math.min(Math.floor(innerHeight * dpr * s), 4096);
+    var d = Math.min(window.devicePixelRatio || 1, 3) * 1.4;
+    var w = Math.min(Math.floor(innerWidth * d), 3840);
+    var h = Math.min(Math.floor(innerHeight * d), 2160);
     glc.width = w; glc.height = h;
     gl.viewport(0, 0, w, h);
     if (uni.res) gl.uniform2f(uni.res, w, h);
   }
 
-  function glFrame(t) {
+  function gpuLoop(t) {
     if (!running || !gl) return;
-    gl.uniform1f(uni.t, t * 0.001);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    rafId = requestAnimationFrame(glFrame);
+    for (var pass = 0; pass < 3; pass++) {
+      gl.uniform1f(uni.t, t * 0.001 + pass * 0.37);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    frames++;
+    rafIds.push(requestAnimationFrame(gpuLoop));
   }
 
-  /* ---------------- 2D overdraw layer ---------------- */
+  /* ---------- 2D overdraw ---------- */
   var fxc = $("fx"), ctx = fxc.getContext("2d");
-  function resizeFX() {
-    fxc.width = innerWidth; fxc.height = innerHeight;
-    ctx.lineWidth = 1;
-  }
-
-  function fxFrame() {
+  function fxLoop() {
     if (!running) return;
+    fxc.width === innerWidth || (fxc.width = innerWidth);
+    fxc.height === innerHeight || (fxc.height = innerHeight);
     ctx.clearRect(0, 0, fxc.width, fxc.height);
-    var w = fxc.width, h = fxc.height;
     for (var i = 0; i < 900; i++) {
-      var x = Math.random() * w, y = Math.random() * h;
-      ctx.strokeStyle = "hsl(" + ((i * 7 + performance.now() * 0.05) % 360) + ",100%,60%)";
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + (Math.random() - 0.5) * 180, y + (Math.random() - 0.5) * 180);
+      var x = Math.random() * fxc.width, y = Math.random() * fxc.height;
+      ctx.strokeStyle = "hsl(" + ((i * 9 + performance.now() * 0.06) % 360) + ",100%,60%)";
+      ctx.beginPath(); ctx.moveTo(x, y);
+      ctx.lineTo(x + (Math.random() - 0.5) * 200, y + (Math.random() - 0.5) * 200);
       ctx.stroke();
     }
-    requestAnimationFrame(fxFrame);
+    rafIds.push(requestAnimationFrame(fxLoop));
   }
 
-  /* ---------------- main-thread math burner ---------------- */
-  function burnMain() {
+  /* ---------- main-thread burner ---------- */
+  function burn() {
     if (!running) return;
     var x = 1.0001, y = 0.5;
     for (var i = 0; i < 150000; i++) {
@@ -165,84 +167,154 @@
       y = Math.cos(y) * 1.0000001 + Math.abs(x) * 0.0001;
     }
     opsMain += 150000;
-    setTimeout(burnMain, 0);
+    timers.push(setTimeout(burn, 0));
   }
 
-  /* ---------------- worker swarm: saturate every core ---------------- */
-  var workerSrc = [
-    "var ops=0,buf=new Float64Array(4096),N=400000;",
-    "function spin(){",
-    "  var x=1.0001,y=0.3;",
-    "  for(var i=0;i<N;i++){",
-    "    x=x*1.0000001+Math.sin(x)*0.001;",
-    "    y=Math.sqrt(Math.abs(y))+Math.cos(x)*0.001;",
-    "    buf[i&4095]=x+y;",
-    "  }",
-    "  ops+=N;",
-    "  buf=new Float64Array(4096);",
-    "  setTimeout(spin,0);",
-    "}",
-    "spin();",
-    "setInterval(function(){postMessage(ops);},500);"
+  /* ---------- workers ---------- */
+  var WSRC = [
+    "var o=0,N=400000;",
+    "function s(){var x=1.0001,y=.3;",
+    "for(var i=0;i<N;i++){x=x*1.0000001+Math.sin(x)*.001;y=Math.sqrt(Math.abs(y))+Math.cos(x)*.001;}",
+    "o+=N;new Float64Array(4096);setTimeout(s,0);}",
+    "s();setInterval(function(){postMessage(o);},500);"
   ].join("\n");
 
-  function spawnWorkers() {
+  function spawn() {
     var n = Math.max(2, Math.min(navigator.hardwareConcurrency || 2, 16));
-    var blob = new Blob([workerSrc], { type: "text/javascript" });
-    var url = URL.createObjectURL(blob);
+    var url = URL.createObjectURL(new Blob([WSRC], { type: "text/javascript" }));
     for (var i = 0; i < n; i++) {
       try {
         var w = new Worker(url);
-        w.onmessage = function (e) { opsWorkers += e.data; };
+        w.onmessage = function (e) { opsWk += e.data; };
         workers.push(w);
-      } catch (err) { /* workers blocked, main thread still burns */ }
+      } catch (e) {}
     }
-    $("thr").textContent = workers.length;
+    S.workers = workers.length;
   }
 
-  /* ---------------- audio drone (keeps the audio chip awake) ---------------- */
+  /* ---------- audio (any first gesture) ---------- */
   function armAudio() {
-    if (actx) return;
+    if (actx || S.audio) return;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
-    actx = new AC();
-    actx.resume();
-
-    var master = actx.createGain();
-    master.gain.value = 0.05;
-    master.connect(actx.destination);
-
-    [41, 55, 82, 110, 164].forEach(function (f, i) {
-      var o = actx.createOscillator();
-      o.type = i % 2 ? "sawtooth" : "square";
-      o.frequency.value = f;
-      var g = actx.createGain();
-      g.gain.value = 0.25 / (i + 1);
-      o.connect(g); g.connect(master);
-      o.start();
-    });
-
-    // white noise loop
-    var len = actx.sampleRate * 2;
-    var nb = actx.createBuffer(1, len, actx.sampleRate);
-    var d = nb.getChannelData(0);
-    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    var ns = actx.createBufferSource();
-    ns.buffer = nb; ns.loop = true;
-    var ng = actx.createGain(); ng.gain.value = 0.35;
-    ns.connect(ng); ng.connect(master);
-    ns.start();
+    try {
+      actx = new AC();
+      if (actx.state === "suspended") actx.resume();
+      var m = actx.createGain(); m.gain.value = 0.05; m.connect(actx.destination);
+      [41, 55, 82, 110, 164].forEach(function (f, i) {
+        var o = actx.createOscillator();
+        o.type = i % 2 ? "sawtooth" : "square";
+        o.frequency.value = f;
+        var g = actx.createGain(); g.gain.value = 0.25 / (i + 1);
+        o.connect(g); g.connect(m); o.start();
+      });
+      var len = actx.sampleRate * 2, nb = actx.createBuffer(1, len, actx.sampleRate), d = nb.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      var ns = actx.createBufferSource(); ns.buffer = nb; ns.loop = true;
+      var ng = actx.createGain(); ng.gain.value = 0.35;
+      ns.connect(ng); ng.connect(m); ns.start();
+      S.audio = true;
+      paintStat();
+    } catch (e) {}
   }
 
-  /* ---------------- screen wake lock + vibration ---------------- */
-  function lockScreen() {
+  function armAll() {
+    armAudio();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+  }
+
+  /* ---------- wake lock ---------- */
+  function lock() {
     if (!("wakeLock" in navigator)) return;
     navigator.wakeLock.request("screen").then(function (l) {
-      wakeLock = l;
-      l.addEventListener("release", function () { if (running) lockScreen(); });
+      wakeLock = l; S.wake = true; paintStat();
+      l.addEventListener("release", function () { S.wake = false; paintStat(); if (running) lock(); });
     }).catch(function () {});
   }
 
-  function buzz() {
-    if (!running || !navigator.vibrate) return;
-    navigator.vibrate([250, 120, 
+  /* ---------- battery ---------- */
+  var samples = [];
+  function battery() {
+    if (!navigator.getBattery) return;
+    navigator.getBattery().then(function (b) {
+      S.bat = true; paintStat();
+      function draw() {
+        var pct = Math.round(b.level * 100);
+        $("lvl").textContent = pct + "%" + (b.charging ? " +" : "");
+        var now = performance.now();
+        if (!b.charging) samples.push([now, b.level]);
+        var cut = now - 60000;
+        while (samples.length && samples[0][0] < cut) samples.shift();
+        if (samples.length > 1) {
+          var mins = (now - samples[0][0]) / 60000;
+          if (mins > 0.4) {
+            var r = ((samples[0][1] - b.level) * 100) / mins;
+            $("rate").textContent = Math.max(r, 0).toFixed(2) + " %/min";
+            if (r > 0.001) {
+              var left = (b.level * 100) / r;
+              $("left").textContent = left > 600 ? "10h+" : Math.round(left) + " min";
+            }
+          }
+        }
+      }
+      draw();
+      b.addEventListener("levelchange", draw);
+      b.addEventListener("chargingchange", draw);
+      timers.push(setInterval(draw, 15000));
+    }).catch(function () {});
+  }
+
+  /* ---------- stats ---------- */
+  function stats() {
+    if (!running) return;
+    var now = performance.now();
+    fps = Math.round((frames * 1000) / (now - t0));
+    frames = 0; t0 = now;
+    if (now - opsT > 900) {
+      var all = opsMain + opsWk;
+      $("ops").textContent = Math.round((all - opsSeen) / ((now - opsT) / 1000)).toLocaleString();
+      opsSeen = all; opsT = now;
+      $("fps").textContent = fps;
+      $("el").textContent = Math.round((now - t0 + (t0 - (t0))) / 1000) + "s";
+      document.title = $("lvl").textContent + " · " + fps + "fps · draining";
+    }
+    rafIds.push(requestAnimationFrame(stats));
+  }
+
+  /* ---------- boot: each part isolated ---------- */
+  S.gpu = safe(initGL);
+  safe(resizeGL);
+  S.cpu = safe(burn);
+  safe(spawn);
+  safe(battery);
+  safe(lock);
+  paintStat();
+
+  if (S.gpu) rafIds.push(requestAnimationFrame(gpuLoop));
+  rafIds.push(requestAnimationFrame(fxLoop));
+  rafIds.push(requestAnimationFrame(stats));
+
+  ["pointerdown", "touchstart", "click", "keydown"].forEach(function (ev) {
+    document.addEventListener(ev, armAll, { passive: true });
+  });
+  window.addEventListener("resize", function () { safe(resizeGL); });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && running) safe(lock);
+  });
+
+  /* ---------- stop ---------- */
+  $("stop").addEventListener("click", function () {
+    running = false;
+    rafIds.forEach(function (i) { cancelAnimationFrame(i); });
+    workers.forEach(function (w) { w.terminate(); });
+    timers.forEach(function (t) { clearTimeout(t); clearInterval(t); });
+    if (wakeLock) wakeLock.release().catch(function () {});
+    if (navigator.vibrate) navigator.vibrate(0);
+    if (actx) actx.suspend();
+    $("stop").textContent = "stopped";
+    S.workers = 0; S.wake = false; paintStat();
+  });
+})();
+</script>
+</body>
+</html>
