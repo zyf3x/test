@@ -192,7 +192,7 @@
 
       <!-- Right: Hand Tracking Mini-Visualizer + Hide UI / Settings -->
       <div class="flex items-center gap-2">
-        <canvas id="hand-pip" width="184" height="136" class="hidden sm:block"></canvas>
+        <canvas id="hand-pip" width="184" height="136" class="block"></canvas>
 
         <button id="btn-toggle-settings" class="interactive glass-pill w-11 h-11 rounded-2xl flex items-center justify-center text-slate-100 active:scale-95 transition" title="Depth & Precision Settings" aria-label="Depth & Precision Settings">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -226,6 +226,15 @@
         </button>
       </div>
 
+      <!-- Pinch Sensitivity Calibration Slider -->
+      <div class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="text-slate-300">Pinch Sensitivity (Touch Trigger)</span>
+          <span id="pinch-sens-label" class="font-mono text-emerald-300">Balanced (0.42)</span>
+        </div>
+        <input id="slider-pinch-sens" type="range" min="0.28" max="0.65" step="0.02" value="0.42" class="w-full" />
+      </div>
+
       <!-- Drawing Depth Offset -->
       <div class="space-y-1">
         <div class="flex justify-between text-xs">
@@ -239,9 +248,9 @@
       <div class="space-y-1">
         <div class="flex justify-between text-xs">
           <span class="text-slate-300">Stabilizer Smoothing</span>
-          <span id="smooth-value-label" class="font-mono text-cyan-300">High (0.32)</span>
+          <span id="smooth-value-label" class="font-mono text-cyan-300">Fast (0.45)</span>
         </div>
-        <input id="slider-smooth" type="range" min="0.12" max="0.85" step="0.02" value="0.32" class="w-full" />
+        <input id="slider-smooth" type="range" min="0.18" max="0.90" step="0.02" value="0.45" class="w-full" />
       </div>
 
       <!-- Glow Intensity Slider -->
@@ -407,6 +416,8 @@
       isTouchDrawing: false,
       handDetected: false,
       lastHandSeenTime: 0,
+      occlusionGraceFrames: 0,
+      livePinchRatio: 1.0,
 
       // Brush & Visual Settings
       color: '#00f5ff',
@@ -415,11 +426,11 @@
       glowEnabled: true,
       glowIntensity: 1.0,
       drawDepth: 0.45,        // meters in front of camera
-      smoothingFactor: 0.32,  // EMA alpha (lower = smoother, higher = snappier)
+      smoothingFactor: 0.45,  // EMA alpha (responsive with zero lag)
 
-      // Pinch Hysteresis Thresholds (normalized hand landmark distance)
-      pinchStartThreshold: 0.048,
-      pinchReleaseThreshold: 0.072,
+      // Tuned Back-Camera Pinch Hysteresis Thresholds (normalized against palm size)
+      pinchStartThreshold: 0.42,
+      pinchReleaseThreshold: 0.56,
 
       // World Anchor Offset (for re-centering in sensor AR mode)
       worldYawOffset: 0,
@@ -453,7 +464,7 @@
     const btnShowUi = document.getElementById('btn-show-ui');
 
     let toastTimeout = null;
-    function showToast(message, duration = 2600) {
+    function showToast(message, duration = 2400) {
       toastBanner.textContent = message;
       toastBanner.classList.remove('hidden');
       clearTimeout(toastTimeout);
@@ -464,19 +475,20 @@
 
     /**
      * ============================================================================
-     * 3. THREE.JS SCENE, LIGHTING, CURSOR & WORLD ANCHOR SETUP
+     * 3. THREE.JS SCENE, LIGHTING, CURSOR & WORLD ANCHOR SETUP (MOBILE OPTIMIZED)
      * ============================================================================
      */
     const renderer = new THREE.WebGLRenderer({
       canvas: canvasEl,
-      antialias: true,
+      antialias: false,
       alpha: true,
       powerPreference: 'high-performance'
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = false;
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.02, 50);
@@ -486,17 +498,17 @@
     const worldGroup = new THREE.Group();
     scene.add(worldGroup);
 
-    // Subtle 3D spatial lighting so non-glowing solid strokes have volumetric shading
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    // Lightweight spatial lighting for solid strokes
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
     scene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.35);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
     dirLight.position.set(1.5, 3.0, 2.0);
     scene.add(dirLight);
 
-    // 3D Precision Air-Cursor (Core Sphere + Outer Reticle Halo)
+    // 3D Precision Air-Cursor (Core Tip + Live Pinch Gauge Ring)
     const cursorGroup = new THREE.Group();
-    const cursorCoreGeo = new THREE.SphereGeometry(0.008, 24, 24);
+    const cursorCoreGeo = new THREE.SphereGeometry(0.007, 16, 16);
     const cursorCoreMat = new THREE.MeshBasicMaterial({
       color: new THREE.Color(state.color),
       transparent: true,
@@ -504,12 +516,13 @@
     });
     const cursorCore = new THREE.Mesh(cursorCoreGeo, cursorCoreMat);
 
-    const cursorHaloGeo = new THREE.RingGeometry(0.012, 0.0155, 32);
+    // Dynamic Pinch Gauge Ring: shrinks and snaps emerald-green when fingers touch
+    const cursorHaloGeo = new THREE.RingGeometry(0.011, 0.015, 28);
     const cursorHaloMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.85,
       blending: THREE.AdditiveBlending,
       depthWrite: false
     });
@@ -529,145 +542,317 @@
 
     /**
      * ============================================================================
-     * 4. VOLUMETRIC 3D STROKE ENGINE (TUBE, CALLIGRAPHY RIBBON & STARDUST GLOW)
+     * 4. ZERO-GC DYNAMIC BUFFER STROKE ENGINE (60FPS IN-PLACE VERTEX STREAMING)
      * ============================================================================
+     * Pre-allocates reusable GPU vertex buffers with THREE.DynamicDrawUsage so
+     * drawing never allocates or garbage-collects geometry per frame!
      */
-    const strokesHistory = []; // Array of stroke objects for Undo / Clear / Glow toggling
+    const strokesHistory = []; // Array of completed/active stroke records
     let activeStroke = null;
 
-    // Reusable vector math helpers
+    const MAX_LIVE_SEGMENTS = 1400; // Up to 1,400 points per continuous stroke at 60fps
+    const RADIAL_SIDES = 6;         // Lightweight hexagonal cross-section for 3D tubes
+
+    // Reusable math vectors (zero heap allocation inside render loop)
     const _vA = new THREE.Vector3();
     const _vB = new THREE.Vector3();
     const _tangent = new THREE.Vector3();
     const _normal = new THREE.Vector3();
     const _binormal = new THREE.Vector3();
     const _upRef = new THREE.Vector3(0, 1, 0);
+    const _altRef = new THREE.Vector3(1, 0, 0);
+    const _ringVert = new THREE.Vector3();
+
+    // Shared procedural circular sprite texture for Stardust brush
+    const sparkleTexture = (() => {
+      const c = document.createElement('canvas');
+      c.width = 32;
+      c.height = 32;
+      const ctx = c.getContext('2d');
+      const g = ctx.createRadialGradient(16, 16, 1, 16, 16, 15);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(0.4, 'rgba(255,255,255,0.85)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 32, 32);
+      return new THREE.CanvasTexture(c);
+    })();
 
     /**
-     * Builds a smooth 3D mesh (core + optional additive neon glow shells) from an array of 3D points.
-     * Uses Catmull-Rom spline interpolation so strokes look silky-smooth from every 360° angle.
+     * Pre-allocated GPU Live Stroke Builder (Zero GC during active drawing)
      */
-    function createVolumetricStrokeGroup(points, options) {
+    class LiveStrokeStream {
+      constructor() {
+        this.group = new THREE.Group();
+        this.group.visible = false;
+        worldGroup.add(this.group);
+
+        // Pre-allocate Tube / Ribbon Geometry (verts = MAX_LIVE_SEGMENTS * RADIAL_SIDES)
+        const maxTubeVerts = MAX_LIVE_SEGMENTS * RADIAL_SIDES;
+        const maxTubeIndices = (MAX_LIVE_SEGMENTS - 1) * RADIAL_SIDES * 6;
+
+        this.corePositions = new Float32Array(maxTubeVerts * 3);
+        this.glowPositions = new Float32Array(maxTubeVerts * 3);
+        this.tubeIndices = new Uint16Array(maxTubeIndices);
+
+        // Pre-fill static index topology once!
+        let idxPtr = 0;
+        for (let seg = 0; seg < MAX_LIVE_SEGMENTS - 1; seg++) {
+          const rowA = seg * RADIAL_SIDES;
+          const rowB = (seg + 1) * RADIAL_SIDES;
+          for (let side = 0; side < RADIAL_SIDES; side++) {
+            const nextSide = (side + 1) % RADIAL_SIDES;
+            const a = rowA + side;
+            const b = rowA + nextSide;
+            const c = rowB + side;
+            const d = rowB + nextSide;
+            this.tubeIndices[idxPtr++] = a;
+            this.tubeIndices[idxPtr++] = c;
+            this.tubeIndices[idxPtr++] = b;
+            this.tubeIndices[idxPtr++] = b;
+            this.tubeIndices[idxPtr++] = c;
+            this.tubeIndices[idxPtr++] = d;
+          }
+        }
+
+        // Core Mesh
+        this.coreGeo = new THREE.BufferGeometry();
+        this.corePosAttr = new THREE.BufferAttribute(this.corePositions, 3);
+        this.corePosAttr.setUsage(THREE.DynamicDrawUsage);
+        this.coreGeo.setAttribute('position', this.corePosAttr);
+        this.coreGeo.setIndex(new THREE.BufferAttribute(this.tubeIndices, 1));
+        this.coreGeo.setDrawRange(0, 0);
+
+        this.coreMat = new THREE.MeshBasicMaterial({ color: 0x00f5ff, side: THREE.DoubleSide });
+        this.coreMesh = new THREE.Mesh(this.coreGeo, this.coreMat);
+        this.coreMesh.frustumCulled = false;
+
+        // Additive Neon Glow Shell Mesh
+        this.glowGeo = new THREE.BufferGeometry();
+        this.glowPosAttr = new THREE.BufferAttribute(this.glowPositions, 3);
+        this.glowPosAttr.setUsage(THREE.DynamicDrawUsage);
+        this.glowGeo.setAttribute('position', this.glowPosAttr);
+        this.glowGeo.setIndex(new THREE.BufferAttribute(this.tubeIndices, 1));
+        this.glowGeo.setDrawRange(0, 0);
+
+        this.glowMat = new THREE.MeshBasicMaterial({
+          color: 0x00f5ff,
+          transparent: true,
+          opacity: 0.36,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide
+        });
+        this.glowMesh = new THREE.Mesh(this.glowGeo, this.glowMat);
+        this.glowMesh.frustumCulled = false;
+
+        // Pre-allocate Sparkle Points Buffer
+        const maxSparkles = MAX_LIVE_SEGMENTS * 3;
+        this.sparklePositions = new Float32Array(maxSparkles * 3);
+        this.sparkleGeo = new THREE.BufferGeometry();
+        this.sparklePosAttr = new THREE.BufferAttribute(this.sparklePositions, 3);
+        this.sparklePosAttr.setUsage(THREE.DynamicDrawUsage);
+        this.sparkleGeo.setAttribute('position', this.sparklePosAttr);
+        this.sparkleGeo.setDrawRange(0, 0);
+
+        this.sparkleMat = new THREE.PointsMaterial({
+          size: 0.035,
+          map: sparkleTexture,
+          color: 0x00f5ff,
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        });
+        this.sparkleMesh = new THREE.Points(this.sparkleGeo, this.sparkleMat);
+        this.sparkleMesh.frustumCulled = false;
+
+        this.group.add(this.coreMesh, this.glowMesh, this.sparkleMesh);
+        this.segmentCount = 0;
+        this.sparkleCount = 0;
+      }
+
+      start(options) {
+        this.segmentCount = 0;
+        this.sparkleCount = 0;
+        this.options = options;
+
+        const baseColor = new THREE.Color(options.color);
+        const coreColor = options.glow
+          ? baseColor.clone().lerp(new THREE.Color(0xffffff), 0.38)
+          : baseColor;
+
+        this.coreMat.color.copy(coreColor);
+        this.glowMat.color.copy(baseColor);
+        this.glowMat.opacity = Math.min(0.85, 0.38 * options.glowIntensity);
+
+        this.sparkleMat.color.copy(coreColor);
+        this.sparkleMat.size = options.size * 4.5;
+        this.sparkleMat.blending = options.glow ? THREE.AdditiveBlending : THREE.NormalBlending;
+
+        const isSparkle = options.style === 'sparkle';
+        this.coreMesh.visible = !isSparkle;
+        this.glowMesh.visible = !isSparkle && options.glow;
+        this.sparkleMesh.visible = isSparkle;
+
+        this.coreGeo.setDrawRange(0, 0);
+        this.glowGeo.setDrawRange(0, 0);
+        this.sparkleGeo.setDrawRange(0, 0);
+        this.group.visible = true;
+      }
+
+      appendPoint(pt, prevPt) {
+        if (this.segmentCount >= MAX_LIVE_SEGMENTS) return;
+
+        if (this.options.style === 'sparkle') {
+          const jitter = this.options.size * 1.35;
+          for (let k = 0; k < 3 && this.sparkleCount < MAX_LIVE_SEGMENTS * 3; k++) {
+            const i3 = this.sparkleCount * 3;
+            this.sparklePositions[i3] = pt.x + (Math.random() - 0.5) * jitter;
+            this.sparklePositions[i3 + 1] = pt.y + (Math.random() - 0.5) * jitter;
+            this.sparklePositions[i3 + 2] = pt.z + (Math.random() - 0.5) * jitter;
+            this.sparkleCount++;
+          }
+          this.sparklePosAttr.needsUpdate = true;
+          this.sparkleGeo.setDrawRange(0, this.sparkleCount);
+          return;
+        }
+
+        // Compute tangent & orthonormal frame in-place (zero allocation)
+        if (prevPt) {
+          _tangent.subVectors(pt, prevPt);
+          if (_tangent.lengthSq() < 1e-8) _tangent.set(0, 0, -1);
+          else _tangent.normalize();
+        } else {
+          _tangent.set(0, 0, -1);
+        }
+
+        const ref = Math.abs(_tangent.y) > 0.9 ? _altRef : _upRef;
+        _binormal.crossVectors(_tangent, ref).normalize();
+        _normal.crossVectors(_binormal, _tangent).normalize();
+
+        const isRibbon = this.options.style === 'ribbon';
+        const rCore = this.options.size;
+        const rGlow = rCore * 2.15;
+        const segOffset = this.segmentCount * RADIAL_SIDES * 3;
+
+        for (let s = 0; s < RADIAL_SIDES; s++) {
+          const theta = (s / RADIAL_SIDES) * Math.PI * 2;
+          const cosT = Math.cos(theta);
+          const sinT = Math.sin(theta);
+
+          // Ribbon flattens the normal axis into a sleek 3D calligraphy blade
+          const scaleB = isRibbon ? 2.1 : 1.0;
+          const scaleN = isRibbon ? 0.18 : 1.0;
+
+          const dirX = _binormal.x * cosT * scaleB + _normal.x * sinT * scaleN;
+          const dirY = _binormal.y * cosT * scaleB + _normal.y * sinT * scaleN;
+          const dirZ = _binormal.z * cosT * scaleB + _normal.z * sinT * scaleN;
+
+          const vIdx = segOffset + s * 3;
+          this.corePositions[vIdx] = pt.x + dirX * rCore;
+          this.corePositions[vIdx + 1] = pt.y + dirY * rCore;
+          this.corePositions[vIdx + 2] = pt.z + dirZ * rCore;
+
+          this.glowPositions[vIdx] = pt.x + dirX * rGlow;
+          this.glowPositions[vIdx + 1] = pt.y + dirY * rGlow;
+          this.glowPositions[vIdx + 2] = pt.z + dirZ * rGlow;
+        }
+
+        this.segmentCount++;
+        this.corePosAttr.needsUpdate = true;
+        this.glowPosAttr.needsUpdate = true;
+
+        if (this.segmentCount >= 2) {
+          const indexCount = (this.segmentCount - 1) * RADIAL_SIDES * 6;
+          this.coreGeo.setDrawRange(0, indexCount);
+          this.glowGeo.setDrawRange(0, indexCount);
+        }
+      }
+
+      stop() {
+        this.group.visible = false;
+      }
+    }
+
+    const liveStream = new LiveStrokeStream();
+
+    /**
+     * Bakes a finalized, memory-compact static mesh once the user releases their pinch.
+     * Runs only ONCE per completed stroke (never per frame!).
+     */
+    function buildFinalizedStrokeMesh(points, options) {
       const group = new THREE.Group();
       if (points.length < 2) return group;
 
       const baseColor = new THREE.Color(options.color);
       const radius = options.size;
 
-      // 1. STARDUST SPARKLE BRUSH
       if (options.style === 'sparkle') {
         const curve = new THREE.CatmullRomCurve3(points);
-        const count = Math.max(12, Math.floor(curve.getLength() * 240));
+        const count = Math.min(900, Math.max(12, Math.floor(curve.getLength() * 180)));
         const sampled = curve.getSpacedPoints(count);
-
         const positions = new Float32Array(sampled.length * 3);
-        const colors = new Float32Array(sampled.length * 3);
 
         sampled.forEach((pt, idx) => {
-          const jitter = radius * 1.4;
+          const jitter = radius * 1.35;
           positions[idx * 3] = pt.x + (Math.random() - 0.5) * jitter;
           positions[idx * 3 + 1] = pt.y + (Math.random() - 0.5) * jitter;
           positions[idx * 3 + 2] = pt.z + (Math.random() - 0.5) * jitter;
-
-          const bright = 0.75 + Math.random() * 0.45;
-          colors[idx * 3] = Math.min(1, baseColor.r * bright + 0.15);
-          colors[idx * 3 + 1] = Math.min(1, baseColor.g * bright + 0.15);
-          colors[idx * 3 + 2] = Math.min(1, baseColor.b * bright + 0.15);
         });
 
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-        // Procedural soft circular sprite texture
-        const spriteCanvas = document.createElement('canvas');
-        spriteCanvas.width = 64;
-        spriteCanvas.height = 64;
-        const sCtx = spriteCanvas.getContext('2d');
-        const grad = sCtx.createRadialGradient(32, 32, 2, 32, 32, 30);
-        grad.addColorStop(0, 'rgba(255,255,255,1)');
-        grad.addColorStop(0.35, 'rgba(255,255,255,0.85)');
-        grad.addColorStop(1, 'rgba(255,255,255,0)');
-        sCtx.fillStyle = grad;
-        sCtx.fillRect(0, 0, 64, 64);
-        const spriteTex = new THREE.CanvasTexture(spriteCanvas);
-
         const mat = new THREE.PointsMaterial({
           size: radius * 4.5,
-          map: spriteTex,
-          vertexColors: true,
+          map: sparkleTexture,
+          color: options.glow ? baseColor.clone().lerp(new THREE.Color(0xffffff), 0.35) : baseColor,
           transparent: true,
-          opacity: options.glow ? 0.95 : 0.85,
+          opacity: 0.95,
           blending: options.glow ? THREE.AdditiveBlending : THREE.NormalBlending,
           depthWrite: false
         });
-
-        const ptsMesh = new THREE.Points(geo, mat);
-        group.add(ptsMesh);
+        group.add(new THREE.Points(geo, mat));
         return group;
       }
 
-      // 2. 3D SMOOTH TUBE OR CALLIGRAPHY RIBBON
       const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.5);
-      const curveLength = curve.getLength();
-      const tubularSegments = Math.min(480, Math.max(12, Math.floor(curveLength * 140)));
+      const tubularSegments = Math.min(320, Math.max(10, Math.floor(curve.getLength() * 110)));
 
       if (options.style === 'tube') {
-        const radialSegments = 12;
-        const coreGeo = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
-
+        const coreGeo = new THREE.TubeGeometry(curve, tubularSegments, radius, 8, false);
         const coreMat = options.glow
-          ? new THREE.MeshBasicMaterial({
-              color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.35)
-            })
-          : new THREE.MeshStandardMaterial({
-              color: baseColor,
-              roughness: 0.32,
-              metalness: 0.15
-            });
+          ? new THREE.MeshBasicMaterial({ color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.38) })
+          : new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.32, metalness: 0.15 });
 
-        const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-        group.add(coreMesh);
+        group.add(new THREE.Mesh(coreGeo, coreMat));
 
-        // End caps so tubes look cleanly rounded from every angle
-        const capGeo = new THREE.SphereGeometry(radius, 12, 12);
+        // Rounded End Caps
+        const capGeo = new THREE.SphereGeometry(radius, 8, 8);
         const startCap = new THREE.Mesh(capGeo, coreMat);
         startCap.position.copy(points[0]);
         const endCap = new THREE.Mesh(capGeo, coreMat);
         endCap.position.copy(points[points.length - 1]);
         group.add(startCap, endCap);
 
-        // Additive Neon Glow Aura Shells (works cleanly over transparent AR camera!)
         if (options.glow) {
-          const innerGlowGeo = new THREE.TubeGeometry(curve, tubularSegments, radius * 1.85, 10, false);
-          const innerGlowMat = new THREE.MeshBasicMaterial({
+          const glowGeo = new THREE.TubeGeometry(curve, tubularSegments, radius * 2.15, 7, false);
+          const glowMat = new THREE.MeshBasicMaterial({
             color: baseColor,
             transparent: true,
-            opacity: Math.min(0.85, 0.34 * options.glowIntensity),
+            opacity: Math.min(0.85, 0.36 * options.glowIntensity),
             blending: THREE.AdditiveBlending,
             depthWrite: false
           });
-          group.add(new THREE.Mesh(innerGlowGeo, innerGlowMat));
-
-          const outerGlowGeo = new THREE.TubeGeometry(curve, Math.max(8, Math.floor(tubularSegments * 0.6)), radius * 3.1, 8, false);
-          const outerGlowMat = new THREE.MeshBasicMaterial({
-            color: baseColor,
-            transparent: true,
-            opacity: Math.min(0.55, 0.15 * options.glowIntensity),
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-          });
-          group.add(new THREE.Mesh(outerGlowGeo, outerGlowMat));
+          group.add(new THREE.Mesh(glowGeo, glowMat));
         }
       } else if (options.style === 'ribbon') {
-        // Tapered Volumetric 3D Calligraphy Ribbon
         const sampled = curve.getSpacedPoints(tubularSegments);
-        const positions = [];
+        const positions = new Float32Array(sampled.length * 6);
         const indices = [];
 
         for (let i = 0; i < sampled.length; i++) {
           const t = i / (sampled.length - 1);
-          // Smooth taper at start and end of stroke
           const taper = Math.sin(Math.pow(t, 0.75) * Math.PI);
           const halfWidth = Math.max(radius * 0.25, radius * 2.2 * (0.25 + 0.75 * taper));
 
@@ -677,31 +862,31 @@
           _tangent.subVectors(next, prev).normalize();
 
           _binormal.crossVectors(_tangent, _upRef);
-          if (_binormal.lengthSq() < 0.001) {
-            _binormal.set(1, 0, 0);
-          }
+          if (_binormal.lengthSq() < 0.001) _binormal.set(1, 0, 0);
           _binormal.normalize();
 
-          _vA.copy(curr).addScaledVector(_binormal, -halfWidth);
-          _vB.copy(curr).addScaledVector(_binormal, halfWidth);
-
-          positions.push(_vA.x, _vA.y, _vA.z, _vB.x, _vB.y, _vB.z);
+          const o = i * 6;
+          positions[o] = curr.x - _binormal.x * halfWidth;
+          positions[o + 1] = curr.y - _binormal.y * halfWidth;
+          positions[o + 2] = curr.z - _binormal.z * halfWidth;
+          positions[o + 3] = curr.x + _binormal.x * halfWidth;
+          positions[o + 4] = curr.y + _binormal.y * halfWidth;
+          positions[o + 5] = curr.z + _binormal.z * halfWidth;
 
           if (i < sampled.length - 1) {
             const base = i * 2;
-            indices.push(base, base + 1, base + 2);
-            indices.push(base + 1, base + 3, base + 2);
+            indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
           }
         }
 
         const ribbonGeo = new THREE.BufferGeometry();
-        ribbonGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        ribbonGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         ribbonGeo.setIndex(indices);
         ribbonGeo.computeVertexNormals();
 
         const ribbonMat = options.glow
           ? new THREE.MeshBasicMaterial({
-              color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.3),
+              color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.35),
               side: THREE.DoubleSide
             })
           : new THREE.MeshStandardMaterial({
@@ -717,13 +902,13 @@
           const glowRibbonMat = new THREE.MeshBasicMaterial({
             color: baseColor,
             transparent: true,
-            opacity: Math.min(0.75, 0.32 * options.glowIntensity),
+            opacity: Math.min(0.75, 0.34 * options.glowIntensity),
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             side: THREE.DoubleSide
           });
           const glowMesh = new THREE.Mesh(ribbonGeo, glowRibbonMat);
-          glowMesh.scale.set(1.005, 1.005, 1.005);
+          glowMesh.scale.set(1.01, 1.01, 1.01);
           group.add(glowMesh);
         }
       }
@@ -747,7 +932,8 @@
         },
         meshGroup: null
       };
-      strokesHistory.push(activeStroke);
+      liveStream.start(activeStroke.options);
+      liveStream.appendPoint(localPt, null);
     }
 
     function appendStrokePoint(worldPos) {
@@ -755,29 +941,25 @@
       const localPt = worldGroup.worldToLocal(worldPos.clone());
       const lastPt = activeStroke.points[activeStroke.points.length - 1];
 
-      // Minimum spatial delta (2.5mm) prevents duplicate vertices & jitter knots
-      if (lastPt.distanceTo(localPt) < 0.0025) return;
+      // 3mm minimum spatial delta prevents redundant vertices while preserving tight curves
+      if (lastPt.distanceTo(localPt) < 0.003) return;
 
       activeStroke.points.push(localPt);
-
-      // Rebuild stroke mesh smoothly
-      if (activeStroke.meshGroup) {
-        worldGroup.remove(activeStroke.meshGroup);
-        disposeGroup(activeStroke.meshGroup);
-      }
-      activeStroke.meshGroup = createVolumetricStrokeGroup(activeStroke.points, activeStroke.options);
-      worldGroup.add(activeStroke.meshGroup);
+      liveStream.appendPoint(localPt, lastPt);
     }
 
     function endStroke() {
       if (!activeStroke) return;
-      // If user just tapped/pinched once without moving, create a glowing 3D dot
+      liveStream.stop();
+
       if (activeStroke.points.length === 1) {
-        const dotPt = activeStroke.points[0].clone().add(new THREE.Vector3(0.0001, 0.0001, 0.0001));
+        const dotPt = activeStroke.points[0].clone().add(new THREE.Vector3(0.0002, 0.0002, 0.0002));
         activeStroke.points.push(dotPt);
-        activeStroke.meshGroup = createVolumetricStrokeGroup(activeStroke.points, activeStroke.options);
-        worldGroup.add(activeStroke.meshGroup);
       }
+
+      activeStroke.meshGroup = buildFinalizedStrokeMesh(activeStroke.points, activeStroke.options);
+      worldGroup.add(activeStroke.meshGroup);
+      strokesHistory.push(activeStroke);
       activeStroke = null;
     }
 
@@ -799,20 +981,28 @@
           worldGroup.remove(stroke.meshGroup);
           disposeGroup(stroke.meshGroup);
         }
-        stroke.meshGroup = createVolumetricStrokeGroup(stroke.points, stroke.options);
+        stroke.meshGroup = buildFinalizedStrokeMesh(stroke.points, stroke.options);
         worldGroup.add(stroke.meshGroup);
       });
     }
 
     /**
      * ============================================================================
-     * 5. PRECISION HAND & PINCH TRACKING (MEDIAPIPE HANDS + EMA SMOOTHING)
+     * 5. DECOUPLED NON-BLOCKING HAND & PINCH TRACKING (ZERO RENDER STALL)
      * ============================================================================
+     * Runs MediaPipe Lite (`modelComplexity: 0`) on a downscaled 320x240 offscreen
+     * canvas in a decoupled background scheduler so Three.js always runs at 60fps.
      */
     let mpHands = null;
     let isProcessingHandFrame = false;
     let smoothedCursorWorld = null;
     let smoothedHandDepthScale = 0;
+
+    // Downscaled offscreen inference buffer (320x240 = ~12x faster inference than 1280x720!)
+    const inferCanvas = document.createElement('canvas');
+    inferCanvas.width = 320;
+    inferCanvas.height = 240;
+    const inferCtx = inferCanvas.getContext('2d', { willReadFrequently: false });
 
     function initMediaPipeHands() {
       if (typeof window.Hands === 'undefined') {
@@ -824,14 +1014,41 @@
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
       });
 
+      // CRITICAL FOR BACK CAMERA:
+      // 1. modelComplexity: 0 (Lite neural network -> ~12ms inference instead of 180ms+)
+      // 2. selfieMode: false (back camera sees hand dorsum/palm unmirrored)
+      // 3. Lower confidence thresholds prevent hand loss right when fingers touch/overlap
       mpHands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.68,
-        minTrackingConfidence: 0.65
+        modelComplexity: 0,
+        selfieMode: false,
+        minDetectionConfidence: 0.45,
+        minTrackingConfidence: 0.45
       });
 
       mpHands.onResults(onHandResults);
+      startHandInferenceLoop();
+    }
+
+    /**
+     * Independent Async Hand Inference Scheduler (never blocks Three.js 60fps loop!)
+     */
+    function startHandInferenceLoop() {
+      const stepInference = async () => {
+        if (state.isRunning && mpHands && !isProcessingHandFrame && videoEl.readyState >= 2) {
+          isProcessingHandFrame = true;
+          try {
+            // Downscale live video frame onto 320x240 offscreen buffer
+            inferCtx.drawImage(videoEl, 0, 0, inferCanvas.width, inferCanvas.height);
+            await mpHands.send({ image: inferCanvas });
+          } catch (e) {
+            isProcessingHandFrame = false;
+          }
+        }
+        // Yield cleanly to browser/GPU between inferences
+        setTimeout(stepInference, 8);
+      };
+      stepInference();
     }
 
     function onHandResults(results) {
@@ -842,7 +1059,13 @@
 
       const landmarks = results.multiHandLandmarks && results.multiHandLandmarks[0];
       if (!landmarks) {
+        // Occlusion grace buffer (3 frames) so momentary finger overlap doesn't drop a stroke!
+        if (state.isPinching && state.occlusionGraceFrames < 3) {
+          state.occlusionGraceFrames++;
+          return;
+        }
         state.handDetected = false;
+        state.occlusionGraceFrames = 0;
         if (state.isPinching && !state.isTouchDrawing) {
           state.isPinching = false;
           endStroke();
@@ -852,38 +1075,49 @@
       }
 
       state.handDetected = true;
+      state.occlusionGraceFrames = 0;
       state.lastHandSeenTime = performance.now();
 
-      // Landmark 4 = Thumb Tip, Landmark 8 = Index Finger Tip
-      // Landmark 0 = Wrist, Landmark 9 = Middle Finger MCP (for relative hand scale / depth)
+      // Key Landmarks:
+      // 4 = Thumb Tip, 8 = Index Finger Tip
+      // 0 = Wrist, 5 = Index MCP, 9 = Middle MCP, 17 = Pinky MCP
       const thumbTip = landmarks[4];
       const indexTip = landmarks[8];
       const wrist = landmarks[0];
+      const indexMcp = landmarks[5];
       const middleMcp = landmarks[9];
+      const pinkyMcp = landmarks[17];
 
-      // 3D Euclidean distance in normalized landmark space
+      // Robust Palm Scale Reference (combines palm length + knuckle width)
+      const palmLength = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y);
+      const palmWidth = Math.hypot(indexMcp.x - pinkyMcp.x, indexMcp.y - pinkyMcp.y);
+      const palmScale = Math.max(0.06, (palmLength + palmWidth) * 0.5);
+
+      // Measure BOTH 2D screen-plane distance AND 3D depth-weighted distance
+      // Why: When thumb & index touch in front of a back camera, Z-depth can jitter slightly
+      // while 2D fingertip centers stay within ~0.25-0.42x palmScale due to finger thickness!
       const dx = thumbTip.x - indexTip.x;
       const dy = thumbTip.y - indexTip.y;
-      const dz = (thumbTip.z - indexTip.z) * 0.65; // Z is slightly noisier in monocular estimation
-      const pinchDist = Math.hypot(dx, dy, dz);
+      const dz = (thumbTip.z - indexTip.z) * 0.35;
 
-      // Normalize pinch distance by apparent hand size so pinching works accurately near or far!
-      const handSpan = Math.max(0.08, Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y));
-      const normalizedPinch = pinchDist / (handSpan * 2.2);
+      const dist2D = Math.hypot(dx, dy) / palmScale;
+      const dist3D = Math.hypot(dx, dy, dz) / palmScale;
+      const pinchRatio = Math.min(dist2D, dist3D * 1.05);
+      state.livePinchRatio = pinchRatio;
 
-      // Hysteresis state machine to prevent flickering breaks while drawing
-      if (!state.isPinching && normalizedPinch < state.pinchStartThreshold) {
+      // Hysteresis Pinch Trigger (Start < 0.42, Release > 0.56)
+      if (!state.isPinching && pinchRatio < state.pinchStartThreshold) {
         state.isPinching = true;
-      } else if (state.isPinching && normalizedPinch > state.pinchReleaseThreshold) {
+      } else if (state.isPinching && pinchRatio > state.pinchReleaseThreshold) {
         state.isPinching = false;
       }
 
-      // Precision Pinch Midpoint (weighted 60% index tip, 40% thumb tip for natural pen-tip feel)
-      const midX = indexTip.x * 0.6 + thumbTip.x * 0.4;
-      const midY = indexTip.y * 0.6 + thumbTip.y * 0.4;
+      // Exact Midpoint between Index Tip (8) & Thumb Tip (4)
+      const midX = (indexTip.x + thumbTip.x) * 0.5;
+      const midY = (indexTip.y + thumbTip.y) * 0.5;
 
-      // Estimate subtle depth modulation from apparent hand span (closer hand = slightly closer cursor)
-      const targetScaleDelta = THREE.MathUtils.clamp((0.22 - handSpan) * 0.75, -0.14, 0.22);
+      // Subtle depth modulation based on apparent palm scale
+      const targetScaleDelta = THREE.MathUtils.clamp((0.20 - palmScale) * 0.65, -0.14, 0.22);
       smoothedHandDepthScale = smoothedHandDepthScale * 0.85 + targetScaleDelta * 0.15;
       const effectiveDepth = Math.max(0.18, state.drawDepth + smoothedHandDepthScale);
 
@@ -899,26 +1133,25 @@
       const dir = rayVec.sub(camPos).normalize();
       const rawWorldTarget = camPos.clone().addScaledVector(dir, effectiveDepth);
 
-      // Exponential Moving Average (EMA) smoothing filter for jitter-free curves
+      // Responsive Exponential Moving Average (EMA) smoothing
       if (!smoothedCursorWorld) {
         smoothedCursorWorld = rawWorldTarget.clone();
       } else {
-        // Adaptive smoothing: slightly tighter when pinching slowly, responsive on fast sweeps
         const distMove = smoothedCursorWorld.distanceTo(rawWorldTarget);
         const dynamicAlpha = THREE.MathUtils.clamp(
-          state.smoothingFactor + distMove * 1.8,
-          0.14,
-          0.88
+          state.smoothingFactor + distMove * 2.2,
+          0.22,
+          0.92
         );
         smoothedCursorWorld.lerp(rawWorldTarget, dynamicAlpha);
       }
 
-      // Draw Mini Hand Skeleton PIP Feedback
-      drawHandSkeletonPIP(landmarks, thumbTip, indexTip, state.isPinching);
+      // Draw Mini Hand Skeleton PIP Feedback with Pinch Distance Meter
+      drawHandSkeletonPIP(landmarks, thumbTip, indexTip, state.isPinching, pinchRatio);
       updateTrackingHUD();
     }
 
-    function drawHandSkeletonPIP(landmarks, thumbTip, indexTip, isPinching) {
+    function drawHandSkeletonPIP(landmarks, thumbTip, indexTip, isPinching, pinchRatio) {
       if (handPipCanvas.classList.contains('hidden')) return;
       const w = handPipCanvas.width;
       const h = handPipCanvas.height;
@@ -940,24 +1173,38 @@
         handPipCtx.stroke();
       });
 
+      // Draw glowing bridge line between thumb and index fingertips
+      handPipCtx.strokeStyle = isPinching ? '#10b981' : '#38bdf8';
+      handPipCtx.lineWidth = isPinching ? 3.5 : 1.8;
+      handPipCtx.beginPath();
+      handPipCtx.moveTo(thumbTip.x * w, thumbTip.y * h);
+      handPipCtx.lineTo(indexTip.x * w, indexTip.y * h);
+      handPipCtx.stroke();
+
       // Highlight Thumb & Index Tips
-      handPipCtx.fillStyle = isPinching ? '#22d3ee' : '#f8fafc';
+      handPipCtx.fillStyle = isPinching ? '#10b981' : '#f8fafc';
       [thumbTip, indexTip].forEach((pt) => {
         handPipCtx.beginPath();
-        handPipCtx.arc(pt.x * w, pt.y * h, isPinching ? 6 : 4.5, 0, Math.PI * 2);
+        handPipCtx.arc(pt.x * w, pt.y * h, isPinching ? 6.5 : 4.5, 0, Math.PI * 2);
         handPipCtx.fill();
       });
+
+      // Live Pinch Gauge Bar along bottom of PIP
+      const readiness = Math.max(0, Math.min(1, 1 - (pinchRatio - state.pinchStartThreshold) / 0.55));
+      handPipCtx.fillStyle = isPinching ? '#10b981' : '#38bdf8';
+      handPipCtx.fillRect(0, h - 5, w * readiness, 5);
     }
 
     function updateTrackingHUD() {
       if (state.isPinching || state.isTouchDrawing) {
-        statusDot.className = 'relative w-3 h-3 rounded-full bg-cyan-400 pinch-pulse shrink-0';
-        pinchStatusText.textContent = 'Drawing in 3D Space...';
-        pinchStatusText.className = 'text-xs font-semibold text-cyan-300';
+        statusDot.className = 'relative w-3 h-3 rounded-full bg-emerald-400 pinch-pulse shrink-0';
+        pinchStatusText.textContent = 'PINCHED — Drawing 3D Stroke!';
+        pinchStatusText.className = 'text-xs font-bold text-emerald-300';
       } else if (state.handDetected) {
-        statusDot.className = 'relative w-3 h-3 rounded-full bg-emerald-400 shrink-0';
-        pinchStatusText.textContent = 'Hand Locked — Pinch to Draw';
-        pinchStatusText.className = 'text-xs font-medium text-emerald-200';
+        const pct = Math.round(Math.max(0, Math.min(99, (1 - (state.livePinchRatio - state.pinchStartThreshold) / 0.5) * 100)));
+        statusDot.className = 'relative w-3 h-3 rounded-full bg-cyan-400 shrink-0';
+        pinchStatusText.textContent = `Hand Ready (${pct}%) — Touch Fingers`;
+        pinchStatusText.className = 'text-xs font-medium text-cyan-200';
       } else {
         statusDot.className = 'relative w-3 h-3 rounded-full bg-amber-400 shrink-0';
         pinchStatusText.textContent = 'Show Hand or Hold Draw Button';
@@ -1037,8 +1284,9 @@
           audio: false,
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 960 },
+            height: { ideal: 540 },
+            frameRate: { ideal: 60, min: 30 }
           }
         });
         videoEl.srcObject = stream;
@@ -1148,12 +1396,14 @@
 
     /**
      * ============================================================================
-     * 7. MAIN 60FPS RENDER & INTERACTION LOOP
+     * 7. MAIN 60FPS RENDER & INTERACTION LOOP (NON-BLOCKING)
      * ============================================================================
      */
     let wasDrawingLastFrame = false;
+    const _camPos = new THREE.Vector3();
+    const _camDir = new THREE.Vector3();
 
-    function renderFrame(timestamp) {
+    function renderFrame() {
       if (!state.isRunning) return;
 
       // 1. Update Camera Pose in Sensor Mode
@@ -1161,15 +1411,7 @@
         updateSensorCameraPose();
       }
 
-      // 2. Feed Back-Camera Frame to MediaPipe Hands asynchronously
-      if (mpHands && !isProcessingHandFrame && videoEl.readyState >= 2) {
-        isProcessingHandFrame = true;
-        mpHands.send({ image: videoEl }).catch(() => {
-          isProcessingHandFrame = false;
-        });
-      }
-
-      // 3. Determine Active 3D Cursor Position (Hand Pinch vs. Manual Hold-to-Draw Reticle)
+      // 2. Determine Active 3D Cursor Position (Hand Pinch vs. Manual Hold-to-Draw Reticle)
       const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
       let cursorWorldPos = null;
       const handRecentlySeen = state.handDetected && (performance.now() - state.lastHandSeenTime < 450);
@@ -1177,29 +1419,40 @@
       if (handRecentlySeen && smoothedCursorWorld && !state.isTouchDrawing) {
         cursorWorldPos = smoothedCursorWorld;
       } else {
-        // Center-screen reticle projection for "Hold to Draw" or aiming
-        const camPos = new THREE.Vector3();
-        const camDir = new THREE.Vector3();
-        activeCam.getWorldPosition(camPos);
-        activeCam.getWorldDirection(camDir);
-        cursorWorldPos = camPos.addScaledVector(camDir, state.drawDepth);
+        activeCam.getWorldPosition(_camPos);
+        activeCam.getWorldDirection(_camDir);
+        cursorWorldPos = _camPos.addScaledVector(_camDir, state.drawDepth);
       }
 
-      // 4. Update 3D Air-Cursor Visuals
+      // 3. Update 3D Air-Cursor & Real-Time Pinch Gauge Ring
       if (cursorWorldPos) {
         cursorGroup.visible = true;
         cursorGroup.position.copy(cursorWorldPos);
         cursorGroup.quaternion.copy(activeCam.quaternion);
 
         const isDrawingNow = (handRecentlySeen && state.isPinching) || state.isTouchDrawing;
-        cursorCoreMat.color.set(state.color);
+        cursorCoreMat.color.set(isDrawingNow ? '#10b981' : state.color);
 
-        const targetScale = isDrawingNow ? (state.brushSize / 0.008) : 1.0;
-        cursorCore.scale.setScalar(THREE.MathUtils.clamp(targetScale, 0.65, 2.4));
-        cursorHalo.scale.setScalar(isDrawingNow ? 0.72 : 1.15);
-        cursorHaloMat.opacity = isDrawingNow ? 0.95 : 0.55;
+        const targetScale = isDrawingNow ? Math.max(0.8, state.brushSize / 0.008) : 1.0;
+        cursorCore.scale.setScalar(THREE.MathUtils.clamp(targetScale, 0.7, 2.2));
 
-        // 5. Handle Stroke State Transitions (Begin / Append / End)
+        // Shrink outer halo ring dynamically as fingers get closer, snapping bright green on pinch!
+        if (isDrawingNow) {
+          cursorHalo.scale.setScalar(0.68);
+          cursorHaloMat.color.set('#10b981');
+          cursorHaloMat.opacity = 1.0;
+        } else if (handRecentlySeen) {
+          const ringScale = THREE.MathUtils.clamp(0.75 + (state.livePinchRatio - state.pinchStartThreshold) * 1.4, 0.75, 1.65);
+          cursorHalo.scale.setScalar(ringScale);
+          cursorHaloMat.color.set('#38bdf8');
+          cursorHaloMat.opacity = 0.75;
+        } else {
+          cursorHalo.scale.setScalar(1.15);
+          cursorHaloMat.color.set('#ffffff');
+          cursorHaloMat.opacity = 0.5;
+        }
+
+        // 4. Handle Zero-GC Stroke State Transitions
         if (isDrawingNow && !wasDrawingLastFrame) {
           beginStroke(cursorWorldPos);
         } else if (isDrawingNow && wasDrawingLastFrame) {
@@ -1357,6 +1610,16 @@
       settingsDrawer.classList.toggle('hidden');
     });
 
+    const sliderPinchSens = document.getElementById('slider-pinch-sens');
+    const pinchSensLabel = document.getElementById('pinch-sens-label');
+    sliderPinchSens.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      state.pinchStartThreshold = val;
+      state.pinchReleaseThreshold = val + 0.14;
+      const tag = val >= 0.52 ? 'Easy' : val >= 0.40 ? 'Balanced' : 'Tight';
+      pinchSensLabel.textContent = `${tag} (${val.toFixed(2)})`;
+    });
+
     const sliderDepth = document.getElementById('slider-depth');
     const depthValueLabel = document.getElementById('depth-value-label');
     sliderDepth.addEventListener('input', (e) => {
@@ -1368,7 +1631,7 @@
     const smoothValueLabel = document.getElementById('smooth-value-label');
     sliderSmooth.addEventListener('input', (e) => {
       state.smoothingFactor = parseFloat(e.target.value);
-      const desc = state.smoothingFactor < 0.28 ? 'Ultra' : state.smoothingFactor < 0.5 ? 'High' : 'Fast';
+      const desc = state.smoothingFactor < 0.32 ? 'Ultra' : state.smoothingFactor < 0.55 ? 'Fast' : 'Instant';
       smoothValueLabel.textContent = `${desc} (${state.smoothingFactor.toFixed(2)})`;
     });
 
