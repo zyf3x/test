@@ -1,2007 +1,248 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>AeroDraw 3D — Mobile WebAR Air-Drawing Studio</title>
-
-  <!-- Tailwind CSS for modern responsive glassmorphic HUD -->
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- Google Fonts: Inter & JetBrains Mono -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
-
-  <!-- MediaPipe Hands via jsDelivr CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
-
-  <!-- Import Map for Three.js ES Modules -->
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-      }
-    }
-  </script>
-
-  <style>
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background-color: #06080d;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      color: #f8fafc;
-      touch-action: none;
-    }
-
-    /* Fullscreen Back-Camera Video Layer (used in Sensor/Fallback AR & Hand Tracking) */
-    #camera-feed {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      z-index: 1;
-      background: #05070a;
-    }
-
-    /* Three.js WebGL / WebXR Canvas */
-    #ar-canvas {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 2;
-      touch-action: none;
-    }
-
-    /* Fullscreen Fingertip & Pinch Tracking Overlay Canvas */
-    #hand-overlay-canvas {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 3;
-      pointer-events: none;
-    }
-
-    /* WebXR DOM Overlay Container */
-    #ar-overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      pointer-events: none;
-      padding: max(12px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom)) 14px;
-    }
-
-    .interactive {
-      pointer-events: auto;
-    }
-
-    /* Glassmorphism Panels */
-    .glass-panel {
-      background: rgba(12, 16, 26, 0.68);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    }
-
-    .glass-pill {
-      background: rgba(12, 16, 26, 0.72);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-    }
-
-    /* Custom Range Sliders */
-    input[type="range"] {
-      -webkit-appearance: none;
-      appearance: none;
-      background: rgba(255, 255, 255, 0.18);
-      height: 6px;
-      border-radius: 999px;
-      outline: none;
-    }
-
-    input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      background: #38bdf8;
-      border: 2px solid #ffffff;
-      box-shadow: 0 0 12px rgba(56, 189, 248, 0.8);
-      cursor: pointer;
-    }
-
-    /* Color Swatch Ring */
-    .swatch-active {
-      transform: scale(1.18);
-      box-shadow: 0 0 0 2px #0f172a, 0 0 0 4px #ffffff, 0 0 16px currentColor;
-    }
-
-    /* Pulsing Pinch Indicator */
-    @keyframes pulse-ring {
-      0% { transform: scale(0.92); opacity: 0.9; }
-      70% { transform: scale(1.35); opacity: 0; }
-      100% { transform: scale(1.35); opacity: 0; }
-    }
-
-    .pinch-pulse::after {
-      content: '';
-      position: absolute;
-      inset: -4px;
-      border-radius: 9999px;
-      border: 2px solid #22d3ee;
-      animation: pulse-ring 1.4s cubic-bezier(0.24, 0, 0.38, 1) infinite;
-    }
-
-    /* Mini Hand Skeleton PIP Canvas */
-    #hand-pip {
-      width: 92px;
-      height: 68px;
-      border-radius: 12px;
-      background: rgba(8, 12, 20, 0.75);
-      border: 1px solid rgba(255, 255, 255, 0.16);
-    }
-
-    /* Smooth hide HUD transition */
-    .hud-hidden {
-      opacity: 0 !important;
-      pointer-events: none !important;
-      transform: translateY(12px);
-    }
-
-    .hud-transition {
-      transition: opacity 0.25s ease, transform 0.25s ease;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Battery Drainer</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:#000;overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#9dff6b;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  #gl,#fx{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #fx{opacity:.5;mix-blend-mode:screen;pointer-events:none}
+  .hud{position:fixed;top:0;left:0;right:0;padding:14px 16px;display:flex;gap:14px;flex-wrap:wrap;
+    align-items:baseline;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    background:linear-gradient(#000d,#0000);pointer-events:none;z-index:5}
+  .k{opacity:.45}
+  .v{color:#e8ffe0;font-weight:700}
+  .bomb{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);font-size:10px;
+    letter-spacing:.3em;text-transform:uppercase;opacity:.3;z-index:5;pointer-events:none;
+    text-align:center;width:90%}
+  #tap{position:fixed;inset:0;display:grid;place-items:center;z-index:10;cursor:pointer;
+    background:#000c;transition:opacity .5s}
+  #tap div{font-size:13px;letter-spacing:.25em;text-transform:uppercase;color:#fff;
+    border:1px solid #9dff6b55;padding:16px 26px;animation:pulse 1.6s infinite}
+  @keyframes pulse{50%{opacity:.3}}
+  #stop{position:fixed;right:14px;bottom:14px;z-index:20;background:#111;color:#9dff6b;
+    border:1px solid #9dff6b44;padding:8px 14px;font:inherit;font-size:11px;letter-spacing:.15em;
+    text-transform:uppercase;cursor:pointer}
+  #stop:hover{background:#1a1a1a}
+</style>
 </head>
 <body>
-  <!-- Hidden / Background Video Element for Back Camera Feed -->
-  <video id="camera-feed" playsinline autoplay muted></video>
+<canvas id="gl"></canvas>
+<canvas id="fx"></canvas>
 
-  <!-- 3D WebGL / WebXR Canvas -->
-  <canvas id="ar-canvas"></canvas>
+<div class="hud">
+  <span><span class="k">battery</span> <span class="v" id="lvl">--%</span></span>
+  <span><span class="k">drain</span> <span class="v" id="rate">--</span></span>
+  <span><span class="k">left</span> <span class="v" id="left">--</span></span>
+  <span><span class="k">threads</span> <span class="v" id="thr">0</span></span>
+  <span><span class="k">ops/s</span> <span class="v" id="ops">0</span></span>
+  <span><span class="k">elapsed</span> <span class="v" id="el">0s</span></span>
+</div>
 
-  <!-- Fullscreen Fingertip & Pinch Visual Guide Canvas -->
-  <canvas id="hand-overlay-canvas"></canvas>
+<div class="bomb">device will get hot &middot; fan will spin &middot; battery will drop</div>
+<button id="stop">stop</button>
+<div id="tap"><div>tap to arm audio</div></div>
 
-  <!-- Main WebXR DOM Overlay & Mobile HUD -->
-  <div id="ar-overlay">
-    <!-- TOP BAR: Status, Hand Tracking PIP & Quick Controls -->
-    <div id="top-hud" class="flex items-start justify-between gap-2 hud-transition">
-      <!-- Left: Tracking & Pinch Status Badge -->
-      <div class="flex flex-col gap-2">
-        <div class="glass-pill rounded-2xl px-3.5 py-2 flex items-center gap-2.5">
-          <span id="status-dot" class="relative w-3 h-3 rounded-full bg-amber-400 shrink-0"></span>
-          <div class="flex flex-col">
-            <span id="tracking-mode-label" class="text-[11px] font-semibold uppercase tracking-wider text-sky-300">Initializing</span>
-            <span id="pinch-status-text" class="text-xs font-medium text-slate-200">Pinch Index + Thumb to Draw</span>
-          </div>
-        </div>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var running = true;
+  var workers = [], timers = [], wakeLock = null, actx = null;
+  var opsMain = 0, opsWorkers = 0, lastOps = 0, lastOpsT = performance.now();
+  var startT = performance.now();
 
-        <!-- Toast Notification Pill (replaces alert/confirm) -->
-        <div id="toast-banner" class="hidden glass-pill rounded-xl px-3 py-1.5 text-xs font-medium text-cyan-200 border-cyan-400/40 max-w-[250px]">
-          Ready
-        </div>
-      </div>
+  /* ---------------- GPU furnace (full-screen fractal, 512 iterations/pixel) ---------------- */
+  var glc = $("gl");
+  var gl = glc.getContext("webgl", {
+    antialias: false, alpha: false, depth: false, stencil: false,
+    powerPreference: "high-performance", desynchronized: true, preserveDrawingBuffer: false
+  });
 
-      <!-- Right: Hand Tracking Mini-Visualizer + Hide UI / Settings -->
-      <div class="flex items-center gap-2">
-        <canvas id="hand-pip" width="184" height="136" class="block"></canvas>
+  var uni = { res: null, t: null }, rafId = 0, vbo = null, prog = null;
 
-        <button id="btn-toggle-settings" class="interactive glass-pill w-11 h-11 rounded-2xl flex items-center justify-center text-slate-100 active:scale-95 transition" title="Depth & Precision Settings" aria-label="Depth & Precision Settings">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-          </svg>
-        </button>
+  var VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
+  var FS = [
+    "precision highp float;",
+    "uniform vec2 res;uniform float t;",
+    "void main(){",
+    "  vec2 uv=(gl_FragCoord.xy-0.5*res)/res.y;",
+    "  vec2 c=uv*1.7-vec2(0.95,0.28);",
+    "  vec2 z=vec2(0.0);",
+    "  float it=0.0;",
+    "  for(int i=0;i<512;i++){",
+    "    z=vec2(z.x*z.x-z.y*z.y,2.0*z.x*z.y)+c+0.012*vec2(sin(t*0.9),cos(t*1.3));",
+    "    if(dot(z,z)>64.0) break;",
+    "    it+=1.0;",
+    "  }",
+    "  float m=it/512.0;",
+    "  vec3 col=vec3(m*0.9,m*m*1.15,sqrt(m)*0.85);",
+    "  for(int k=0;k<12;k++){ col+=0.018*sin(vec3(t*0.6+float(k)*1.7+uv.xyx*22.0)); }",
+    "  col+=0.06*vec3(uv.x+0.5,uv.y+0.5,0.6);",
+    "  gl_FragColor=vec4(col,1.0);",
+    "}"
+  ].join("\n");
 
-        <button id="btn-hide-ui" class="interactive glass-pill w-11 h-11 rounded-2xl flex items-center justify-center text-slate-100 active:scale-95 transition" title="Clean View / Screenshot Mode" aria-label="Hide UI">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
-        </button>
-      </div>
-    </div>
+  function shader(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(s));
+    return s;
+  }
 
-    <!-- Floating Restore UI Button (Only visible when HUD is hidden) -->
-    <button id="btn-show-ui" class="hidden interactive self-end glass-pill px-4 py-2.5 rounded-full text-xs font-semibold text-white flex items-center gap-2 shadow-lg active:scale-95">
-      <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-      </svg>
-      Show Controls
-    </button>
+  function initGL() {
+    if (!gl) return;
+    prog = gl.createProgram();
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
 
-    <!-- Collapsible Precision & Depth Drawer -->
-    <div id="settings-drawer" class="hidden interactive glass-panel rounded-2xl p-4 mx-auto w-full max-w-md space-y-3.5 hud-transition">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-bold uppercase tracking-wider text-cyan-300">3D Spatial & Pinch Precision</span>
-        <button id="btn-recenter-world" class="text-xs font-semibold bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg text-slate-200 active:scale-95">
-          Re-Anchor Space
-        </button>
-      </div>
+    vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    var loc = gl.getAttribLocation(prog, "p");
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-      <!-- Pinch Sensitivity Calibration Slider -->
-      <div class="space-y-1">
-        <div class="flex justify-between text-xs">
-          <span class="text-slate-300">Pinch Sensitivity (Touch Trigger)</span>
-          <span id="pinch-sens-label" class="font-mono text-emerald-300">Easy (0.52)</span>
-        </div>
-        <input id="slider-pinch-sens" type="range" min="0.32" max="0.78" step="0.02" value="0.52" class="w-full" />
-      </div>
+    uni.res = gl.getUniformLocation(prog, "res");
+    uni.t = gl.getUniformLocation(prog, "t");
+    resizeGL();
+  }
 
-      <!-- Drawing Depth Offset -->
-      <div class="space-y-1">
-        <div class="flex justify-between text-xs">
-          <span class="text-slate-300">Air Canvas Distance</span>
-          <span id="depth-value-label" class="font-mono text-cyan-300">0.45 m</span>
-        </div>
-        <input id="slider-depth" type="range" min="0.22" max="1.10" step="0.02" value="0.45" class="w-full" />
-      </div>
+  function resizeGL() {
+    if (!gl) return;
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    var s = 1.4; // supersample: more pixels = more work
+    var w = Math.min(Math.floor(innerWidth * dpr * s), 4096);
+    var h = Math.min(Math.floor(innerHeight * dpr * s), 4096);
+    glc.width = w; glc.height = h;
+    gl.viewport(0, 0, w, h);
+    if (uni.res) gl.uniform2f(uni.res, w, h);
+  }
 
-      <!-- Smoothing Filter Strength -->
-      <div class="space-y-1">
-        <div class="flex justify-between text-xs">
-          <span class="text-slate-300">Stabilizer Smoothing</span>
-          <span id="smooth-value-label" class="font-mono text-cyan-300">Fast (0.45)</span>
-        </div>
-        <input id="slider-smooth" type="range" min="0.18" max="0.90" step="0.02" value="0.45" class="w-full" />
-      </div>
+  function glFrame(t) {
+    if (!running || !gl) return;
+    gl.uniform1f(uni.t, t * 0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    rafId = requestAnimationFrame(glFrame);
+  }
 
-      <!-- Glow Intensity Slider -->
-      <div class="space-y-1">
-        <div class="flex justify-between text-xs">
-          <span class="text-slate-300">Neon Glow Aura</span>
-          <span id="glow-intensity-label" class="font-mono text-cyan-300">100%</span>
-        </div>
-        <input id="slider-glow-intensity" type="range" min="0.2" max="1.8" step="0.1" value="1.0" class="w-full" />
-      </div>
+  /* ---------------- 2D overdraw layer ---------------- */
+  var fxc = $("fx"), ctx = fxc.getContext("2d");
+  function resizeFX() {
+    fxc.width = innerWidth; fxc.height = innerHeight;
+    ctx.lineWidth = 1;
+  }
 
-      <!-- Hand Skeleton PIP Toggle for Mobile -->
-      <div class="flex items-center justify-between pt-1 border-t border-white/10">
-        <span class="text-xs text-slate-300">Show Hand Tracking Preview</span>
-        <button id="btn-toggle-pip" class="px-3 py-1 rounded-lg text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
-          Toggle Mini-View
-        </button>
-      </div>
-    </div>
-
-    <!-- BOTTOM DOCK: Tools, Colors, Brush Size, Glow & Fallback Draw Button -->
-    <div id="bottom-hud" class="flex flex-col gap-2.5 max-w-xl w-full mx-auto hud-transition">
-      <!-- Row 1: Manual Touch Draw Trigger + Undo / Clear + Glow Toggle -->
-      <div class="flex items-center justify-between gap-2">
-        <!-- Undo & Clear Group -->
-        <div class="interactive glass-pill rounded-2xl p-1.5 flex items-center gap-1">
-          <button id="btn-undo" class="px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-white/10 active:scale-95 flex items-center gap-1.5" title="Undo Last Stroke">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-            </svg>
-            <span>Undo</span>
-          </button>
-          <div class="w-px h-5 bg-white/15"></div>
-          <button id="btn-clear" class="px-3 py-2 rounded-xl text-xs font-semibold text-rose-300 hover:bg-rose-500/20 active:scale-95 flex items-center gap-1.5" title="Clear Canvas">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            <span id="clear-btn-label">Clear</span>
-          </button>
-        </div>
-
-        <!-- Hold-to-Draw Touch Fallback Button (Draws with Phone Movement if Hand isn't visible) -->
-        <button id="btn-hold-draw" class="interactive glass-pill px-4 py-2.5 rounded-2xl text-xs font-bold tracking-wide text-white border-cyan-400/40 bg-gradient-to-r from-cyan-500/25 to-blue-600/25 active:from-cyan-400 active:to-blue-500 active:text-slate-950 active:scale-95 transition flex items-center gap-2 shadow-lg">
-          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
-          <span>HOLD TO DRAW</span>
-        </button>
-
-        <!-- Neon Glow Mode Toggle -->
-        <button id="btn-glow-toggle" class="interactive glass-pill px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border-amber-300/50 bg-amber-400/20 text-amber-200 shadow-[0_0_20px_rgba(251,191,36,0.3)] active:scale-95 transition">
-          <svg class="w-4 h-4 text-amber-300" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z" />
-          </svg>
-          <span id="glow-btn-label">Glow: ON</span>
-        </button>
-      </div>
-
-      <!-- Row 2: Main Creative Palette & Brush Controls -->
-      <div class="interactive glass-panel rounded-3xl p-3.5 flex flex-col gap-3">
-        <!-- Color Swatches Row -->
-        <div class="flex items-center justify-between gap-2 overflow-x-auto py-1 px-1">
-          <div id="color-swatches" class="flex items-center gap-2.5">
-            <button data-color="#00f5ff" style="background:#00f5ff; color:#00f5ff;" class="swatch-btn swatch-active w-7 h-7 rounded-full transition" aria-label="Neon Cyan"></button>
-            <button data-color="#ff2a85" style="background:#ff2a85; color:#ff2a85;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Electric Magenta"></button>
-            <button data-color="#39ff14" style="background:#39ff14; color:#39ff14;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Laser Lime"></button>
-            <button data-color="#ffd000" style="background:#ffd000; color:#ffd000;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Solar Gold"></button>
-            <button data-color="#a855f7" style="background:#a855f7; color:#a855f7;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Ultraviolet"></button>
-            <button data-color="#ff5e3a" style="background:#ff5e3a; color:#ff5e3a;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Plasma Coral"></button>
-            <button data-color="#ffffff" style="background:#ffffff; color:#ffffff;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Pure White"></button>
-          </div>
-
-          <!-- Custom Color Picker -->
-          <label class="relative w-7 h-7 rounded-full overflow-hidden border border-white/40 cursor-pointer shrink-0 flex items-center justify-center bg-gradient-to-tr from-pink-500 via-amber-400 to-cyan-400" title="Custom Color">
-            <input id="custom-color-picker" type="color" value="#00f5ff" class="opacity-0 absolute inset-0 w-full h-full cursor-pointer" />
-            <span class="text-[11px] font-bold text-slate-950">+</span>
-          </label>
-        </div>
-
-        <!-- Brush Style & Thickness Row -->
-        <div class="flex items-center justify-between gap-3 pt-1 border-t border-white/10">
-          <!-- Brush Style Selector -->
-          <div class="flex items-center bg-white/5 rounded-xl p-1 gap-1 shrink-0">
-            <button data-brush="tube" class="brush-btn bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition">
-              3D Tube
-            </button>
-            <button data-brush="ribbon" class="brush-btn text-slate-300 hover:bg-white/10 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition">
-              Ribbon
-            </button>
-            <button data-brush="sparkle" class="brush-btn text-slate-300 hover:bg-white/10 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition">
-              Stardust
-            </button>
-          </div>
-
-          <!-- Stroke Thickness Slider -->
-          <div class="flex items-center gap-2 flex-1 min-w-0">
-            <span class="text-[11px] text-slate-400 shrink-0">Size</span>
-            <input id="slider-brush-size" type="range" min="0.003" max="0.028" step="0.001" value="0.009" class="w-full" />
-            <span id="brush-size-label" class="text-[11px] font-mono text-slate-200 w-9 text-right shrink-0">9mm</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- START / PERMISSIONS ONBOARDING SCREEN -->
-  <div id="start-screen" class="fixed inset-0 z-30 flex items-center justify-center p-5 bg-slate-950/90 backdrop-blur-xl">
-    <div class="glass-panel rounded-3xl p-6 max-w-md w-full space-y-5 border border-cyan-400/25 shadow-2xl">
-      <div class="flex items-center gap-3.5">
-        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center shadow-[0_0_25px_rgba(34,211,238,0.5)] shrink-0">
-          <svg class="w-7 h-7 text-slate-950" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42" />
-          </svg>
-        </div>
-        <div>
-          <h1 class="text-xl font-bold tracking-tight text-white">AeroDraw 3D</h1>
-          <p class="text-xs text-cyan-300 font-medium">Spatial Back-Camera AR Air Sculpting</p>
-        </div>
-      </div>
-
-      <div class="space-y-3 text-xs text-slate-300 leading-relaxed bg-white/5 rounded-2xl p-4 border border-white/10">
-        <div class="flex items-start gap-2.5">
-          <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
-          <p><strong class="text-white">Pinch Index + Thumb Together:</strong> Hold your hand in front of the back camera and touch your index fingertip and thumb tip together to draw 3D strokes in mid-air.</p>
-        </div>
-        <div class="flex items-start gap-2.5">
-          <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
-          <p><strong class="text-white">Walk Around Your Art:</strong> Your strokes are anchored in 3D space—walk around, under, and through your glowing sculptures from any angle.</p>
-        </div>
-        <div class="flex items-start gap-2.5">
-          <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
-          <p><strong class="text-white">Neon Glow & Brushes:</strong> Toggle luminous additive glow shells, switch between 3D Tubes, Calligraphy Ribbons, or Stardust, or use <em>Hold to Draw</em> anytime.</p>
-        </div>
-      </div>
-
-      <div id="capability-badge" class="text-[11px] text-center text-slate-400 bg-slate-900/80 py-2 px-3 rounded-xl border border-white/10">
-        Checking device AR & camera capabilities...
-      </div>
-
-      <div id="start-error-box" class="hidden text-xs text-rose-200 bg-rose-950/80 border border-rose-500/40 rounded-xl p-3 leading-relaxed"></div>
-
-      <div class="flex flex-col gap-2.5">
-        <button id="btn-launch-ar" type="button" class="w-full py-3.5 px-5 rounded-2xl font-bold text-sm text-slate-950 bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 hover:brightness-110 active:scale-[0.98] transition shadow-[0_0_25px_rgba(56,189,248,0.45)] cursor-pointer">
-          Start Back-Camera AR Studio
-        </button>
-
-        <button id="btn-launch-webxr" type="button" class="hidden w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-cyan-200 bg-white/10 hover:bg-white/15 active:scale-[0.98] transition cursor-pointer">
-          Experimental WebXR 6DOF Mode (No Hand Camera on Some Phones)
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- APPLICATION LOGIC -->
-  <script type="module">
-    import * as THREE from 'three';
-
-    /**
-     * ============================================================================
-     * 1. APPLICATION STATE & CONFIGURATION
-     * ============================================================================
-     */
-    const state = {
-      isRunning: false,
-      arMode: 'none', // 'webxr' | 'sensor'
-      isPinching: false,
-      isTouchDrawing: false,
-      isCanvasDragging: false,
-      touchNdcX: 0,
-      touchNdcY: 0,
-      handDetected: false,
-      handEngineStatus: 'loading', // 'loading' | 'ready' | 'unavailable'
-      lastHandSeenTime: 0,
-      occlusionGraceFrames: 0,
-      livePinchRatio: 1.0,
-
-      // Brush & Visual Settings
-      color: '#00f5ff',
-      brushSize: 0.009,       // meters (9mm default)
-      brushStyle: 'tube',     // 'tube' | 'ribbon' | 'sparkle'
-      glowEnabled: true,
-      glowIntensity: 1.0,
-      drawDepth: 0.45,        // meters in front of camera
-      smoothingFactor: 0.45,
-      // Tuned Back-Camera Pinch Hysteresis Thresholds (generous multi-metric ratio)
-      pinchStartThreshold: 0.52,
-      pinchReleaseThreshold: 0.68,
-
-      // World Anchor Offset (for re-centering in sensor AR mode)
-      worldYawOffset: 0,
-      clearConfirmPending: false,
-      clearConfirmTimer: null
-    };
-
-    /**
-     * ============================================================================
-     * 2. DOM ELEMENT REFERENCES & UI HELPERS
-     * ============================================================================
-     */
-    const videoEl = document.getElementById('camera-feed');
-    const canvasEl = document.getElementById('ar-canvas');
-    const handOverlayCanvas = document.getElementById('hand-overlay-canvas');
-    const handOverlayCtx = handOverlayCanvas.getContext('2d');
-    const startScreen = document.getElementById('start-screen');
-    const capabilityBadge = document.getElementById('capability-badge');
-    const startErrorBox = document.getElementById('start-error-box');
-    const btnLaunchAR = document.getElementById('btn-launch-ar');
-    const btnLaunchWebXR = document.getElementById('btn-launch-webxr');
-
-    const statusDot = document.getElementById('status-dot');
-    const trackingModeLabel = document.getElementById('tracking-mode-label');
-    const pinchStatusText = document.getElementById('pinch-status-text');
-    const toastBanner = document.getElementById('toast-banner');
-
-    const handPipCanvas = document.getElementById('hand-pip');
-    const handPipCtx = handPipCanvas.getContext('2d');
-
-    const topHud = document.getElementById('top-hud');
-    const bottomHud = document.getElementById('bottom-hud');
-    const settingsDrawer = document.getElementById('settings-drawer');
-    const btnShowUi = document.getElementById('btn-show-ui');
-
-    let toastTimeout = null;
-    function showToast(message, duration = 2400) {
-      toastBanner.textContent = message;
-      toastBanner.classList.remove('hidden');
-      clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => {
-        toastBanner.classList.add('hidden');
-      }, duration);
+  function fxFrame() {
+    if (!running) return;
+    ctx.clearRect(0, 0, fxc.width, fxc.height);
+    var w = fxc.width, h = fxc.height;
+    for (var i = 0; i < 900; i++) {
+      var x = Math.random() * w, y = Math.random() * h;
+      ctx.strokeStyle = "hsl(" + ((i * 7 + performance.now() * 0.05) % 360) + ",100%,60%)";
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (Math.random() - 0.5) * 180, y + (Math.random() - 0.5) * 180);
+      ctx.stroke();
     }
+    requestAnimationFrame(fxFrame);
+  }
 
-    function showStartError(message) {
-      startErrorBox.textContent = message;
-      startErrorBox.classList.remove('hidden');
+  /* ---------------- main-thread math burner ---------------- */
+  function burnMain() {
+    if (!running) return;
+    var x = 1.0001, y = 0.5;
+    for (var i = 0; i < 150000; i++) {
+      x = Math.sin(x * 1.0000001) + Math.sqrt(Math.abs(y)) * 0.0001;
+      y = Math.cos(y) * 1.0000001 + Math.abs(x) * 0.0001;
     }
-
-    /**
-     * ============================================================================
-     * 3. THREE.JS SCENE, LIGHTING, CURSOR & WORLD ANCHOR SETUP (MOBILE OPTIMIZED)
-     * ============================================================================
-     */
-    const renderer = new THREE.WebGLRenderer({
-      canvas: canvasEl,
-      antialias: false,
-      alpha: true,
-      powerPreference: 'high-performance'
-    });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = false;
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.02, 50);
-    scene.add(camera);
-
-    // Root container for all 3D air-drawings (allows clean re-anchoring)
-    const worldGroup = new THREE.Group();
-    scene.add(worldGroup);
-
-    // Lightweight spatial lighting for solid strokes
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
-    scene.add(ambientLight);
-
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(1.5, 3.0, 2.0);
-    scene.add(dirLight);
-
-    // 3D Precision Air-Cursor (Core Tip + Live Pinch Gauge Ring)
-    const cursorGroup = new THREE.Group();
-    const cursorCoreGeo = new THREE.SphereGeometry(0.007, 16, 16);
-    const cursorCoreMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(state.color),
-      transparent: true,
-      opacity: 0.95
-    });
-    const cursorCore = new THREE.Mesh(cursorCoreGeo, cursorCoreMat);
-
-    // Dynamic Pinch Gauge Ring: shrinks and snaps emerald-green when fingers touch
-    const cursorHaloGeo = new THREE.RingGeometry(0.011, 0.015, 28);
-    const cursorHaloMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.85,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
-    const cursorHalo = new THREE.Mesh(cursorHaloGeo, cursorHaloMat);
-
-    cursorGroup.add(cursorCore);
-    cursorGroup.add(cursorHalo);
-    cursorGroup.visible = false;
-    scene.add(cursorGroup);
-
-    // Handle Window Resize
-    function resizeCanvases() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      handOverlayCanvas.width = window.innerWidth;
-      handOverlayCanvas.height = window.innerHeight;
-    }
-    resizeCanvases();
-    window.addEventListener('resize', resizeCanvases);
-
-    /**
-     * ============================================================================
-     * 4. ZERO-GC DYNAMIC BUFFER STROKE ENGINE (60FPS IN-PLACE VERTEX STREAMING)
-     * ============================================================================
-     * Pre-allocates reusable GPU vertex buffers with THREE.DynamicDrawUsage so
-     * drawing never allocates or garbage-collects geometry per frame!
-     */
-    const strokesHistory = []; // Array of completed/active stroke records
-    let activeStroke = null;
-
-    const MAX_LIVE_SEGMENTS = 1400; // Up to 1,400 points per continuous stroke at 60fps
-    const RADIAL_SIDES = 6;         // Lightweight hexagonal cross-section for 3D tubes
-
-    // Reusable math vectors (zero heap allocation inside render loop)
-    const _vA = new THREE.Vector3();
-    const _vB = new THREE.Vector3();
-    const _tangent = new THREE.Vector3();
-    const _normal = new THREE.Vector3();
-    const _binormal = new THREE.Vector3();
-    const _upRef = new THREE.Vector3(0, 1, 0);
-    const _altRef = new THREE.Vector3(1, 0, 0);
-    const _ringVert = new THREE.Vector3();
-
-    // Shared procedural circular sprite texture for Stardust brush
-    const sparkleTexture = (() => {
-      const c = document.createElement('canvas');
-      c.width = 32;
-      c.height = 32;
-      const ctx = c.getContext('2d');
-      const g = ctx.createRadialGradient(16, 16, 1, 16, 16, 15);
-      g.addColorStop(0, 'rgba(255,255,255,1)');
-      g.addColorStop(0.4, 'rgba(255,255,255,0.85)');
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, 32, 32);
-      return new THREE.CanvasTexture(c);
-    })();
-
-    /**
-     * Pre-allocated GPU Live Stroke Builder (Zero GC during active drawing)
-     */
-    class LiveStrokeStream {
-      constructor() {
-        this.group = new THREE.Group();
-        this.group.visible = false;
-        worldGroup.add(this.group);
-
-        // Pre-allocate Tube / Ribbon Geometry (verts = MAX_LIVE_SEGMENTS * RADIAL_SIDES)
-        const maxTubeVerts = MAX_LIVE_SEGMENTS * RADIAL_SIDES;
-        const maxTubeIndices = (MAX_LIVE_SEGMENTS - 1) * RADIAL_SIDES * 6;
-
-        this.corePositions = new Float32Array(maxTubeVerts * 3);
-        this.glowPositions = new Float32Array(maxTubeVerts * 3);
-        this.tubeIndices = new Uint16Array(maxTubeIndices);
-
-        // Pre-fill static index topology once!
-        let idxPtr = 0;
-        for (let seg = 0; seg < MAX_LIVE_SEGMENTS - 1; seg++) {
-          const rowA = seg * RADIAL_SIDES;
-          const rowB = (seg + 1) * RADIAL_SIDES;
-          for (let side = 0; side < RADIAL_SIDES; side++) {
-            const nextSide = (side + 1) % RADIAL_SIDES;
-            const a = rowA + side;
-            const b = rowA + nextSide;
-            const c = rowB + side;
-            const d = rowB + nextSide;
-            this.tubeIndices[idxPtr++] = a;
-            this.tubeIndices[idxPtr++] = c;
-            this.tubeIndices[idxPtr++] = b;
-            this.tubeIndices[idxPtr++] = b;
-            this.tubeIndices[idxPtr++] = c;
-            this.tubeIndices[idxPtr++] = d;
-          }
-        }
-
-        // Core Mesh
-        this.coreGeo = new THREE.BufferGeometry();
-        this.corePosAttr = new THREE.BufferAttribute(this.corePositions, 3);
-        this.corePosAttr.setUsage(THREE.DynamicDrawUsage);
-        this.coreGeo.setAttribute('position', this.corePosAttr);
-        this.coreGeo.setIndex(new THREE.BufferAttribute(this.tubeIndices, 1));
-        this.coreGeo.setDrawRange(0, 0);
-
-        this.coreMat = new THREE.MeshBasicMaterial({ color: 0x00f5ff, side: THREE.DoubleSide });
-        this.coreMesh = new THREE.Mesh(this.coreGeo, this.coreMat);
-        this.coreMesh.frustumCulled = false;
-
-        // Additive Neon Glow Shell Mesh
-        this.glowGeo = new THREE.BufferGeometry();
-        this.glowPosAttr = new THREE.BufferAttribute(this.glowPositions, 3);
-        this.glowPosAttr.setUsage(THREE.DynamicDrawUsage);
-        this.glowGeo.setAttribute('position', this.glowPosAttr);
-        this.glowGeo.setIndex(new THREE.BufferAttribute(this.tubeIndices, 1));
-        this.glowGeo.setDrawRange(0, 0);
-
-        this.glowMat = new THREE.MeshBasicMaterial({
-          color: 0x00f5ff,
-          transparent: true,
-          opacity: 0.36,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-          side: THREE.DoubleSide
-        });
-        this.glowMesh = new THREE.Mesh(this.glowGeo, this.glowMat);
-        this.glowMesh.frustumCulled = false;
-
-        // Pre-allocate Sparkle Points Buffer
-        const maxSparkles = MAX_LIVE_SEGMENTS * 3;
-        this.sparklePositions = new Float32Array(maxSparkles * 3);
-        this.sparkleGeo = new THREE.BufferGeometry();
-        this.sparklePosAttr = new THREE.BufferAttribute(this.sparklePositions, 3);
-        this.sparklePosAttr.setUsage(THREE.DynamicDrawUsage);
-        this.sparkleGeo.setAttribute('position', this.sparklePosAttr);
-        this.sparkleGeo.setDrawRange(0, 0);
-
-        this.sparkleMat = new THREE.PointsMaterial({
-          size: 0.035,
-          map: sparkleTexture,
-          color: 0x00f5ff,
-          transparent: true,
-          opacity: 0.95,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        });
-        this.sparkleMesh = new THREE.Points(this.sparkleGeo, this.sparkleMat);
-        this.sparkleMesh.frustumCulled = false;
-
-        this.group.add(this.coreMesh, this.glowMesh, this.sparkleMesh);
-        this.segmentCount = 0;
-        this.sparkleCount = 0;
-      }
-
-      start(options) {
-        this.segmentCount = 0;
-        this.sparkleCount = 0;
-        this.options = options;
-
-        const baseColor = new THREE.Color(options.color);
-        const coreColor = options.glow
-          ? baseColor.clone().lerp(new THREE.Color(0xffffff), 0.38)
-          : baseColor;
-
-        this.coreMat.color.copy(coreColor);
-        this.glowMat.color.copy(baseColor);
-        this.glowMat.opacity = Math.min(0.85, 0.38 * options.glowIntensity);
-
-        this.sparkleMat.color.copy(coreColor);
-        this.sparkleMat.size = options.size * 4.5;
-        this.sparkleMat.blending = options.glow ? THREE.AdditiveBlending : THREE.NormalBlending;
-
-        const isSparkle = options.style === 'sparkle';
-        this.coreMesh.visible = !isSparkle;
-        this.glowMesh.visible = !isSparkle && options.glow;
-        this.sparkleMesh.visible = isSparkle;
-
-        this.coreGeo.setDrawRange(0, 0);
-        this.glowGeo.setDrawRange(0, 0);
-        this.sparkleGeo.setDrawRange(0, 0);
-        this.group.visible = true;
-      }
-
-      appendPoint(pt, prevPt) {
-        if (this.segmentCount >= MAX_LIVE_SEGMENTS) return;
-
-        if (this.options.style === 'sparkle') {
-          const jitter = this.options.size * 1.35;
-          for (let k = 0; k < 3 && this.sparkleCount < MAX_LIVE_SEGMENTS * 3; k++) {
-            const i3 = this.sparkleCount * 3;
-            this.sparklePositions[i3] = pt.x + (Math.random() - 0.5) * jitter;
-            this.sparklePositions[i3 + 1] = pt.y + (Math.random() - 0.5) * jitter;
-            this.sparklePositions[i3 + 2] = pt.z + (Math.random() - 0.5) * jitter;
-            this.sparkleCount++;
-          }
-          this.sparklePosAttr.needsUpdate = true;
-          this.sparkleGeo.setDrawRange(0, this.sparkleCount);
-          return;
-        }
-
-        // Compute tangent & orthonormal frame in-place (zero allocation)
-        if (prevPt) {
-          _tangent.subVectors(pt, prevPt);
-          if (_tangent.lengthSq() < 1e-8) _tangent.set(0, 0, -1);
-          else _tangent.normalize();
-        } else {
-          _tangent.set(0, 0, -1);
-        }
-
-        const ref = Math.abs(_tangent.y) > 0.9 ? _altRef : _upRef;
-        _binormal.crossVectors(_tangent, ref).normalize();
-        _normal.crossVectors(_binormal, _tangent).normalize();
-
-        const isRibbon = this.options.style === 'ribbon';
-        const rCore = this.options.size;
-        const rGlow = rCore * 2.15;
-        const segOffset = this.segmentCount * RADIAL_SIDES * 3;
-
-        for (let s = 0; s < RADIAL_SIDES; s++) {
-          const theta = (s / RADIAL_SIDES) * Math.PI * 2;
-          const cosT = Math.cos(theta);
-          const sinT = Math.sin(theta);
-
-          // Ribbon flattens the normal axis into a sleek 3D calligraphy blade
-          const scaleB = isRibbon ? 2.1 : 1.0;
-          const scaleN = isRibbon ? 0.18 : 1.0;
-
-          const dirX = _binormal.x * cosT * scaleB + _normal.x * sinT * scaleN;
-          const dirY = _binormal.y * cosT * scaleB + _normal.y * sinT * scaleN;
-          const dirZ = _binormal.z * cosT * scaleB + _normal.z * sinT * scaleN;
-
-          const vIdx = segOffset + s * 3;
-          this.corePositions[vIdx] = pt.x + dirX * rCore;
-          this.corePositions[vIdx + 1] = pt.y + dirY * rCore;
-          this.corePositions[vIdx + 2] = pt.z + dirZ * rCore;
-
-          this.glowPositions[vIdx] = pt.x + dirX * rGlow;
-          this.glowPositions[vIdx + 1] = pt.y + dirY * rGlow;
-          this.glowPositions[vIdx + 2] = pt.z + dirZ * rGlow;
-        }
-
-        this.segmentCount++;
-        this.corePosAttr.needsUpdate = true;
-        this.glowPosAttr.needsUpdate = true;
-
-        if (this.segmentCount >= 2) {
-          const indexCount = (this.segmentCount - 1) * RADIAL_SIDES * 6;
-          this.coreGeo.setDrawRange(0, indexCount);
-          this.glowGeo.setDrawRange(0, indexCount);
-        }
-      }
-
-      stop() {
-        this.group.visible = false;
-      }
-    }
-
-    const liveStream = new LiveStrokeStream();
-
-    /**
-     * Bakes a finalized, memory-compact static mesh once the user releases their pinch.
-     * Runs only ONCE per completed stroke (never per frame!).
-     */
-    function buildFinalizedStrokeMesh(points, options) {
-      const group = new THREE.Group();
-      if (points.length < 2) return group;
-
-      const baseColor = new THREE.Color(options.color);
-      const radius = options.size;
-
-      if (options.style === 'sparkle') {
-        const curve = new THREE.CatmullRomCurve3(points);
-        const count = Math.min(900, Math.max(12, Math.floor(curve.getLength() * 180)));
-        const sampled = curve.getSpacedPoints(count);
-        const positions = new Float32Array(sampled.length * 3);
-
-        sampled.forEach((pt, idx) => {
-          const jitter = radius * 1.35;
-          positions[idx * 3] = pt.x + (Math.random() - 0.5) * jitter;
-          positions[idx * 3 + 1] = pt.y + (Math.random() - 0.5) * jitter;
-          positions[idx * 3 + 2] = pt.z + (Math.random() - 0.5) * jitter;
-        });
-
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const mat = new THREE.PointsMaterial({
-          size: radius * 4.5,
-          map: sparkleTexture,
-          color: options.glow ? baseColor.clone().lerp(new THREE.Color(0xffffff), 0.35) : baseColor,
-          transparent: true,
-          opacity: 0.95,
-          blending: options.glow ? THREE.AdditiveBlending : THREE.NormalBlending,
-          depthWrite: false
-        });
-        group.add(new THREE.Points(geo, mat));
-        return group;
-      }
-
-      const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.5);
-      const tubularSegments = Math.min(320, Math.max(10, Math.floor(curve.getLength() * 110)));
-
-      if (options.style === 'tube') {
-        const coreGeo = new THREE.TubeGeometry(curve, tubularSegments, radius, 8, false);
-        const coreMat = options.glow
-          ? new THREE.MeshBasicMaterial({ color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.38) })
-          : new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.32, metalness: 0.15 });
-
-        group.add(new THREE.Mesh(coreGeo, coreMat));
-
-        // Rounded End Caps
-        const capGeo = new THREE.SphereGeometry(radius, 8, 8);
-        const startCap = new THREE.Mesh(capGeo, coreMat);
-        startCap.position.copy(points[0]);
-        const endCap = new THREE.Mesh(capGeo, coreMat);
-        endCap.position.copy(points[points.length - 1]);
-        group.add(startCap, endCap);
-
-        if (options.glow) {
-          const glowGeo = new THREE.TubeGeometry(curve, tubularSegments, radius * 2.15, 7, false);
-          const glowMat = new THREE.MeshBasicMaterial({
-            color: baseColor,
-            transparent: true,
-            opacity: Math.min(0.85, 0.36 * options.glowIntensity),
-            blending: THREE.AdditiveBlending,
-            depthWrite: false
-          });
-          group.add(new THREE.Mesh(glowGeo, glowMat));
-        }
-      } else if (options.style === 'ribbon') {
-        const sampled = curve.getSpacedPoints(tubularSegments);
-        const positions = new Float32Array(sampled.length * 6);
-        const indices = [];
-
-        for (let i = 0; i < sampled.length; i++) {
-          const t = i / (sampled.length - 1);
-          const taper = Math.sin(Math.pow(t, 0.75) * Math.PI);
-          const halfWidth = Math.max(radius * 0.25, radius * 2.2 * (0.25 + 0.75 * taper));
-
-          const curr = sampled[i];
-          const prev = sampled[Math.max(0, i - 1)];
-          const next = sampled[Math.min(sampled.length - 1, i + 1)];
-          _tangent.subVectors(next, prev).normalize();
-
-          _binormal.crossVectors(_tangent, _upRef);
-          if (_binormal.lengthSq() < 0.001) _binormal.set(1, 0, 0);
-          _binormal.normalize();
-
-          const o = i * 6;
-          positions[o] = curr.x - _binormal.x * halfWidth;
-          positions[o + 1] = curr.y - _binormal.y * halfWidth;
-          positions[o + 2] = curr.z - _binormal.z * halfWidth;
-          positions[o + 3] = curr.x + _binormal.x * halfWidth;
-          positions[o + 4] = curr.y + _binormal.y * halfWidth;
-          positions[o + 5] = curr.z + _binormal.z * halfWidth;
-
-          if (i < sampled.length - 1) {
-            const base = i * 2;
-            indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
-          }
-        }
-
-        const ribbonGeo = new THREE.BufferGeometry();
-        ribbonGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        ribbonGeo.setIndex(indices);
-        ribbonGeo.computeVertexNormals();
-
-        const ribbonMat = options.glow
-          ? new THREE.MeshBasicMaterial({
-              color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.35),
-              side: THREE.DoubleSide
-            })
-          : new THREE.MeshStandardMaterial({
-              color: baseColor,
-              roughness: 0.35,
-              metalness: 0.2,
-              side: THREE.DoubleSide
-            });
-
-        group.add(new THREE.Mesh(ribbonGeo, ribbonMat));
-
-        if (options.glow) {
-          const glowRibbonMat = new THREE.MeshBasicMaterial({
-            color: baseColor,
-            transparent: true,
-            opacity: Math.min(0.75, 0.34 * options.glowIntensity),
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            side: THREE.DoubleSide
-          });
-          const glowMesh = new THREE.Mesh(ribbonGeo, glowRibbonMat);
-          glowMesh.scale.set(1.01, 1.01, 1.01);
-          group.add(glowMesh);
-        }
-      }
-
-      return group;
-    }
-
-    /**
-     * Stroke Lifecycle Management
-     */
-    function beginStroke(startWorldPos) {
-      const localPt = worldGroup.worldToLocal(startWorldPos.clone());
-      activeStroke = {
-        points: [localPt],
-        options: {
-          color: state.color,
-          size: state.brushSize,
-          style: state.brushStyle,
-          glow: state.glowEnabled,
-          glowIntensity: state.glowIntensity
-        },
-        meshGroup: null
-      };
-      liveStream.start(activeStroke.options);
-      liveStream.appendPoint(localPt, null);
-    }
-
-    function appendStrokePoint(worldPos) {
-      if (!activeStroke) return;
-      const localPt = worldGroup.worldToLocal(worldPos.clone());
-      const lastPt = activeStroke.points[activeStroke.points.length - 1];
-
-      // 3mm minimum spatial delta prevents redundant vertices while preserving tight curves
-      if (lastPt.distanceTo(localPt) < 0.003) return;
-
-      activeStroke.points.push(localPt);
-      liveStream.appendPoint(localPt, lastPt);
-    }
-
-    function endStroke() {
-      if (!activeStroke) return;
-      liveStream.stop();
-
-      if (activeStroke.points.length === 1) {
-        const dotPt = activeStroke.points[0].clone().add(new THREE.Vector3(0.0002, 0.0002, 0.0002));
-        activeStroke.points.push(dotPt);
-      }
-
-      activeStroke.meshGroup = buildFinalizedStrokeMesh(activeStroke.points, activeStroke.options);
-      worldGroup.add(activeStroke.meshGroup);
-      strokesHistory.push(activeStroke);
-      activeStroke = null;
-    }
-
-    function disposeGroup(group) {
-      group.traverse((child) => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) {
-          if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
-          else child.material.dispose();
-        }
-      });
-    }
-
-    function rebuildAllStrokesWithGlow(glowState) {
-      strokesHistory.forEach((stroke) => {
-        stroke.options.glow = glowState;
-        stroke.options.glowIntensity = state.glowIntensity;
-        if (stroke.meshGroup) {
-          worldGroup.remove(stroke.meshGroup);
-          disposeGroup(stroke.meshGroup);
-        }
-        stroke.meshGroup = buildFinalizedStrokeMesh(stroke.points, stroke.options);
-        worldGroup.add(stroke.meshGroup);
-      });
-    }
-
-    /**
-     * ============================================================================
-     * 5. DECOUPLED NON-BLOCKING HAND & PINCH TRACKING (ASPECT-RATIO PRESERVED)
-     * ============================================================================
-     * Pads the portrait 9:16 mobile video onto an unstretched 320x320 square canvas
-     * so MediaPipe Hands never suffers from portrait squashing, and maps landmarks
-     * back accurately into screen coordinates.
-     */
-    let mpHands = null;
-    let isProcessingHandFrame = false;
-    let smoothedCursorWorld = null;
-    let smoothedHandDepthScale = 0;
-    let smoothedPinchMetric = 1.0;
-
-    // Square 256x256 offscreen buffer with letterbox padding metadata (fast mobile inference + zero portrait distortion)
-    const inferCanvas = document.createElement('canvas');
-    inferCanvas.width = 256;
-    inferCanvas.height = 256;
-    const inferCtx = inferCanvas.getContext('2d', { willReadFrequently: false });
-    const inferTransform = { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 };
-
-    function withTimeout(promise, ms, label) {
-      return Promise.race([
-        promise,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
-        )
-      ]);
-    }
-
-    async function initMediaPipeHandsAsync() {
-      state.handEngineStatus = 'loading';
-      updateTrackingHUD();
-
-      // Wait briefly if CDN script is still parsing
-      let waitAttempts = 0;
-      while (typeof window.Hands === 'undefined' && waitAttempts < 25) {
-        await new Promise((r) => setTimeout(r, 200));
-        waitAttempts++;
-      }
-
-      if (typeof window.Hands === 'undefined') {
-        state.handEngineStatus = 'unavailable';
-        updateTrackingHUD();
-        showToast('Hand AI offline — touch screen or Hold to Draw');
-        return;
-      }
-
+    opsMain += 150000;
+    setTimeout(burnMain, 0);
+  }
+
+  /* ---------------- worker swarm: saturate every core ---------------- */
+  var workerSrc = [
+    "var ops=0,buf=new Float64Array(4096),N=400000;",
+    "function spin(){",
+    "  var x=1.0001,y=0.3;",
+    "  for(var i=0;i<N;i++){",
+    "    x=x*1.0000001+Math.sin(x)*0.001;",
+    "    y=Math.sqrt(Math.abs(y))+Math.cos(x)*0.001;",
+    "    buf[i&4095]=x+y;",
+    "  }",
+    "  ops+=N;",
+    "  buf=new Float64Array(4096);",
+    "  setTimeout(spin,0);",
+    "}",
+    "spin();",
+    "setInterval(function(){postMessage(ops);},500);"
+  ].join("\n");
+
+  function spawnWorkers() {
+    var n = Math.max(2, Math.min(navigator.hardwareConcurrency || 2, 16));
+    var blob = new Blob([workerSrc], { type: "text/javascript" });
+    var url = URL.createObjectURL(blob);
+    for (var i = 0; i < n; i++) {
       try {
-        mpHands = new window.Hands({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
-        });
-
-        // Fast Lite model (modelComplexity: 0) tuned for back-camera hands in portrait & landscape
-        mpHands.setOptions({
-          maxNumHands: 1,
-          modelComplexity: 0,
-          selfieMode: false,
-          minDetectionConfidence: 0.45,
-          minTrackingConfidence: 0.45
-        });
-
-        mpHands.onResults(onHandResults);
-
-        // Warm up WASM graph in background with timeout protection so it never hangs
-        if (typeof mpHands.initialize === 'function') {
-          await withTimeout(mpHands.initialize(), 12000, 'MediaPipe Hands WASM');
-        }
-
-        state.handEngineStatus = 'ready';
-        updateTrackingHUD();
-        startHandInferenceLoop();
-      } catch (err) {
-        console.warn('MediaPipe Hands background init warning:', err);
-        state.handEngineStatus = 'unavailable';
-        updateTrackingHUD();
-        showToast('Hand AI unavailable — drag screen or Hold to Draw');
-      }
+        var w = new Worker(url);
+        w.onmessage = function (e) { opsWorkers += e.data; };
+        workers.push(w);
+      } catch (err) { /* workers blocked, main thread still burns */ }
     }
-
-    /**
-     * Independent Async Hand Inference Scheduler with Aspect-Ratio Preserving Padding
-     */
-    function startHandInferenceLoop() {
-      const stepInference = async () => {
-        if (state.isRunning && mpHands && !isProcessingHandFrame && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-          isProcessingHandFrame = true;
-          try {
-            const vw = videoEl.videoWidth;
-            const vh = videoEl.videoHeight;
-            const size = inferCanvas.width;
-
-            inferCtx.fillStyle = '#000000';
-            inferCtx.fillRect(0, 0, size, size);
-
-            let drawW = size;
-            let drawH = size;
-            let offX = 0;
-            let offY = 0;
-
-            if (vw > vh) {
-              drawH = Math.round(size * (vh / vw));
-              offY = Math.floor((size - drawH) * 0.5);
-            } else {
-              drawW = Math.round(size * (vw / vh));
-              offX = Math.floor((size - drawW) * 0.5);
-            }
-
-            inferTransform.offsetX = offX / size;
-            inferTransform.offsetY = offY / size;
-            inferTransform.scaleX = drawW / size;
-            inferTransform.scaleY = drawH / size;
-
-            inferCtx.drawImage(videoEl, offX, offY, drawW, drawH);
-            await withTimeout(mpHands.send({ image: inferCanvas }), 2500, 'Hand frame');
-          } catch (e) {
-            isProcessingHandFrame = false;
-          }
-        }
-        setTimeout(stepInference, 12);
-      };
-      stepInference();
-    }
-
-    /**
-     * Maps padded square MediaPipe landmark (0..1) back to true video normalized coordinates (0..1)
-     * and accounts for CSS `object-fit: cover` crop on screen.
-     */
-    function landmarkToScreenNormalized(lm) {
-      const vidU = THREE.MathUtils.clamp((lm.x - inferTransform.offsetX) / inferTransform.scaleX, 0, 1);
-      const vidV = THREE.MathUtils.clamp((lm.y - inferTransform.offsetY) / inferTransform.scaleY, 0, 1);
-
-      const vw = videoEl.videoWidth || window.innerWidth;
-      const vh = videoEl.videoHeight || window.innerHeight;
-      const sw = window.innerWidth;
-      const sh = window.innerHeight;
-
-      const videoAspect = vw / vh;
-      const screenAspect = sw / sh;
-
-      let screenU = vidU;
-      let screenV = vidV;
-
-      if (videoAspect > screenAspect) {
-        // Video is wider than screen: left/right cropped by object-fit: cover
-        const visibleRatio = screenAspect / videoAspect;
-        const cropOffset = (1 - visibleRatio) * 0.5;
-        screenU = (vidU - cropOffset) / visibleRatio;
-      } else {
-        // Video is taller than screen: top/bottom cropped by object-fit: cover
-        const visibleRatio = videoAspect / screenAspect;
-        const cropOffset = (1 - visibleRatio) * 0.5;
-        screenV = (vidV - cropOffset) / visibleRatio;
-      }
-
-      return {
-        x: THREE.MathUtils.clamp(screenU, 0, 1),
-        y: THREE.MathUtils.clamp(screenV, 0, 1),
-        z: lm.z
-      };
-    }
-
-    function onHandResults(results) {
-      isProcessingHandFrame = false;
-
-      // Clear PIP & fullscreen fingertip guide overlays
-      handPipCtx.clearRect(0, 0, handPipCanvas.width, handPipCanvas.height);
-      handOverlayCtx.clearRect(0, 0, handOverlayCanvas.width, handOverlayCanvas.height);
-
-      const rawLandmarks = results.multiHandLandmarks && results.multiHandLandmarks[0];
-      if (!rawLandmarks) {
-        if (state.isPinching && state.occlusionGraceFrames < 4) {
-          state.occlusionGraceFrames++;
-          return;
-        }
-        state.handDetected = false;
-        state.occlusionGraceFrames = 0;
-        if (state.isPinching && !state.isTouchDrawing) {
-          state.isPinching = false;
-          endStroke();
-        }
-        updateTrackingHUD();
-        return;
-      }
-
-      // Unpad landmarks into true aspect-accurate screen coordinates
-      const landmarks = rawLandmarks.map(landmarkToScreenNormalized);
-
-      state.handDetected = true;
-      state.occlusionGraceFrames = 0;
-      state.lastHandSeenTime = performance.now();
-
-      // Key Landmarks:
-      // 4 = Thumb Tip, 3 = Thumb IP, 8 = Index Tip, 7 = Index DIP, 6 = Index PIP, 5 = Index MCP
-      const thumbTip = landmarks[4];
-      const thumbIp = landmarks[3];
-      const indexTip = landmarks[8];
-      const indexDip = landmarks[7];
-      const indexPip = landmarks[6];
-      const indexMcp = landmarks[5];
-      const wrist = landmarks[0];
-      const middleMcp = landmarks[9];
-      const pinkyMcp = landmarks[17];
-
-      // 1. Hand Bounding Box & Finger Segment Reference Scale (angle-invariant!)
-      let minX = 1, maxX = 0, minY = 1, maxY = 0;
-      for (let i = 0; i < landmarks.length; i++) {
-        if (landmarks[i].x < minX) minX = landmarks[i].x;
-        if (landmarks[i].x > maxX) maxX = landmarks[i].x;
-        if (landmarks[i].y < minY) minY = landmarks[i].y;
-        if (landmarks[i].y > maxY) maxY = landmarks[i].y;
-      }
-      const bboxDiag = Math.hypot((maxX - minX) * window.innerWidth, (maxY - minY) * window.innerHeight);
-      const indexLenPx =
-        Math.hypot((indexMcp.x - indexPip.x) * window.innerWidth, (indexMcp.y - indexPip.y) * window.innerHeight) +
-        Math.hypot((indexPip.x - indexDip.x) * window.innerWidth, (indexPip.y - indexDip.y) * window.innerHeight) +
-        Math.hypot((indexDip.x - indexTip.x) * window.innerWidth, (indexDip.y - indexTip.y) * window.innerHeight);
-
-      // Reference unit in screen pixels (works whether hand is sideways, palm-out, or back-of-hand)
-      const refScalePx = Math.max(45, Math.max(bboxDiag * 0.42, indexLenPx * 0.95));
-
-      // 2. Multi-Point Fingertip Proximity (Tip-to-Tip AND Tip-to-DIP/IP pad contact)
-      const tipToTipPx = Math.hypot(
-        (thumbTip.x - indexTip.x) * window.innerWidth,
-        (thumbTip.y - indexTip.y) * window.innerHeight
-      );
-      const thumbToIndexDipPx = Math.hypot(
-        (thumbTip.x - indexDip.x) * window.innerWidth,
-        (thumbTip.y - indexDip.y) * window.innerHeight
-      );
-      const indexToThumbIpPx = Math.hypot(
-        (indexTip.x - thumbIp.x) * window.innerWidth,
-        (indexTip.y - thumbIp.y) * window.innerHeight
-      );
-
-      // Minimum contact distance across fingertip pads
-      const effectiveContactPx = Math.min(tipToTipPx, thumbToIndexDipPx * 1.12, indexToThumbIpPx * 1.12);
-      const rawPinchRatio = effectiveContactPx / refScalePx;
-
-      // Fast low-pass filter on pinch metric to eliminate single-frame jitter
-      smoothedPinchMetric = smoothedPinchMetric * 0.45 + rawPinchRatio * 0.55;
-      state.livePinchRatio = smoothedPinchMetric;
-
-      // Hysteresis Pinch Trigger (Start < 0.52, Release > 0.68)
-      if (!state.isPinching && smoothedPinchMetric < state.pinchStartThreshold) {
-        state.isPinching = true;
-      } else if (state.isPinching && smoothedPinchMetric > state.pinchReleaseThreshold) {
-        state.isPinching = false;
-      }
-
-      // Exact Midpoint between Index Tip (8) & Thumb Tip (4)
-      const midX = (indexTip.x + thumbTip.x) * 0.5;
-      const midY = (indexTip.y + thumbTip.y) * 0.5;
-
-      // Apparent hand size depth modulation
-      const palmLength = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y);
-      const palmWidth = Math.hypot(indexMcp.x - pinkyMcp.x, indexMcp.y - pinkyMcp.y);
-      const palmScale = Math.max(0.06, (palmLength + palmWidth) * 0.5);
-
-      const targetScaleDelta = THREE.MathUtils.clamp((0.20 - palmScale) * 0.65, -0.14, 0.22);
-      smoothedHandDepthScale = smoothedHandDepthScale * 0.85 + targetScaleDelta * 0.15;
-      const effectiveDepth = Math.max(0.18, state.drawDepth + smoothedHandDepthScale);
-
-      // Project screen coordinates (0..1) into 3D Camera Space
-      const ndcX = midX * 2 - 1;
-      const ndcY = -(midY * 2 - 1);
-
-      const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
-      const rayVec = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(activeCam);
-      const camPos = new THREE.Vector3();
-      activeCam.getWorldPosition(camPos);
-
-      const dir = rayVec.sub(camPos).normalize();
-      const rawWorldTarget = camPos.clone().addScaledVector(dir, effectiveDepth);
-
-      if (!smoothedCursorWorld) {
-        smoothedCursorWorld = rawWorldTarget.clone();
-      } else {
-        const distMove = smoothedCursorWorld.distanceTo(rawWorldTarget);
-        const dynamicAlpha = THREE.MathUtils.clamp(
-          state.smoothingFactor + distMove * 2.2,
-          0.22,
-          0.92
-        );
-        smoothedCursorWorld.lerp(rawWorldTarget, dynamicAlpha);
-      }
-
-      // Draw both PIP skeleton and subtle live screen-space fingertip dots
-      drawHandSkeletonPIP(landmarks, thumbTip, indexTip, state.isPinching, smoothedPinchMetric);
-      drawFullscreenFingertipGuide(thumbTip, indexTip, state.isPinching);
-      updateTrackingHUD();
-    }
-
-    function drawFullscreenFingertipGuide(thumbTip, indexTip, isPinching) {
-      const sw = handOverlayCanvas.width;
-      const sh = handOverlayCanvas.height;
-      const tx = thumbTip.x * sw;
-      const ty = thumbTip.y * sh;
-      const ix = indexTip.x * sw;
-      const iy = indexTip.y * sh;
-
-      // Subtle connecting line between thumb & index fingertips
-      handOverlayCtx.strokeStyle = isPinching ? 'rgba(16, 185, 129, 0.9)' : 'rgba(56, 189, 248, 0.55)';
-      handOverlayCtx.lineWidth = isPinching ? 3 : 1.5;
-      handOverlayCtx.beginPath();
-      handOverlayCtx.moveTo(tx, ty);
-      handOverlayCtx.lineTo(ix, iy);
-      handOverlayCtx.stroke();
-
-      // Fingertip target rings
-      [
-        { x: tx, y: ty },
-        { x: ix, y: iy }
-      ].forEach((pt) => {
-        handOverlayCtx.beginPath();
-        handOverlayCtx.arc(pt.x, pt.y, isPinching ? 8 : 6, 0, Math.PI * 2);
-        handOverlayCtx.fillStyle = isPinching ? 'rgba(16, 185, 129, 0.35)' : 'rgba(56, 189, 248, 0.25)';
-        handOverlayCtx.fill();
-        handOverlayCtx.lineWidth = 2;
-        handOverlayCtx.strokeStyle = isPinching ? '#10b981' : '#38bdf8';
-        handOverlayCtx.stroke();
-      });
-    }
-
-    function drawHandSkeletonPIP(landmarks, thumbTip, indexTip, isPinching, pinchRatio) {
-      if (handPipCanvas.classList.contains('hidden')) return;
-      const w = handPipCanvas.width;
-      const h = handPipCanvas.height;
-
-      const connections = [
-        [0, 1], [1, 2], [2, 3], [3, 4],
-        [0, 5], [5, 6], [6, 7], [7, 8],
-        [5, 9], [9, 10], [10, 11], [11, 12],
-        [9, 13], [13, 14], [14, 15], [15, 16],
-        [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]
-      ];
-
-      handPipCtx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
-      handPipCtx.lineWidth = 2;
-      connections.forEach(([a, b]) => {
-        handPipCtx.beginPath();
-        handPipCtx.moveTo(landmarks[a].x * w, landmarks[a].y * h);
-        handPipCtx.lineTo(landmarks[b].x * w, landmarks[b].y * h);
-        handPipCtx.stroke();
-      });
-
-      // Draw glowing bridge line between thumb and index fingertips
-      handPipCtx.strokeStyle = isPinching ? '#10b981' : '#38bdf8';
-      handPipCtx.lineWidth = isPinching ? 3.5 : 1.8;
-      handPipCtx.beginPath();
-      handPipCtx.moveTo(thumbTip.x * w, thumbTip.y * h);
-      handPipCtx.lineTo(indexTip.x * w, indexTip.y * h);
-      handPipCtx.stroke();
-
-      // Highlight Thumb & Index Tips
-      handPipCtx.fillStyle = isPinching ? '#10b981' : '#f8fafc';
-      [thumbTip, indexTip].forEach((pt) => {
-        handPipCtx.beginPath();
-        handPipCtx.arc(pt.x * w, pt.y * h, isPinching ? 6.5 : 4.5, 0, Math.PI * 2);
-        handPipCtx.fill();
-      });
-
-      // Live Pinch Gauge Bar along bottom of PIP
-      const readiness = Math.max(0, Math.min(1, 1 - (pinchRatio - state.pinchStartThreshold) / 0.55));
-      handPipCtx.fillStyle = isPinching ? '#10b981' : '#38bdf8';
-      handPipCtx.fillRect(0, h - 5, w * readiness, 5);
-    }
-
-    function updateTrackingHUD() {
-      if (state.isPinching || state.isTouchDrawing || state.isCanvasDragging) {
-        statusDot.className = 'relative w-3 h-3 rounded-full bg-emerald-400 pinch-pulse shrink-0';
-        pinchStatusText.textContent = 'DRAWING — 3D Spatial Stroke Active!';
-        pinchStatusText.className = 'text-xs font-bold text-emerald-300';
-      } else if (state.handDetected) {
-        const pct = Math.round(Math.max(0, Math.min(99, (1 - (state.livePinchRatio - state.pinchStartThreshold) / 0.5) * 100)));
-        statusDot.className = 'relative w-3 h-3 rounded-full bg-cyan-400 shrink-0';
-        pinchStatusText.textContent = `Hand Ready (${pct}%) — Touch Fingers`;
-        pinchStatusText.className = 'text-xs font-medium text-cyan-200';
-      } else if (state.handEngineStatus === 'loading') {
-        statusDot.className = 'relative w-3 h-3 rounded-full bg-sky-400 animate-pulse shrink-0';
-        pinchStatusText.textContent = 'Loading hand AI... (Touch screen to draw)';
-        pinchStatusText.className = 'text-xs font-medium text-sky-200';
-      } else if (state.handEngineStatus === 'unavailable') {
-        statusDot.className = 'relative w-3 h-3 rounded-full bg-amber-400 shrink-0';
-        pinchStatusText.textContent = 'Touch Screen or Hold Button to Draw';
-        pinchStatusText.className = 'text-xs font-medium text-slate-200';
-      } else {
-        statusDot.className = 'relative w-3 h-3 rounded-full bg-amber-400 shrink-0';
-        pinchStatusText.textContent = 'Show Hand, Drag Screen, or Hold Draw';
-        pinchStatusText.className = 'text-xs font-medium text-slate-200';
-      }
-    }
-
-    /**
-     * ============================================================================
-     * 6. BACK CAMERA + DUAL-MODE SPATIAL TRACKING (WEBXR + SENSOR GYRO AR)
-     * ============================================================================
-     */
-    let deviceOrientationData = { alpha: 0, beta: 90, gamma: 0, hasData: false };
-    let screenOrientationAngle = 0;
-
-    // Pseudo-6DOF subtle parallax walking estimator when WebXR isn't available
-    let sensorPosition = new THREE.Vector3(0, 0, 0);
-    let sensorVelocity = new THREE.Vector3(0, 0, 0);
-
-    function setupDeviceOrientationTracking() {
-      window.addEventListener('orientationchange', () => {
-        screenOrientationAngle = window.orientation || 0;
-      });
-
-      window.addEventListener('deviceorientation', (event) => {
-        if (event.alpha !== null && event.beta !== null && event.gamma !== null) {
-          deviceOrientationData.alpha = event.alpha;
-          deviceOrientationData.beta = event.beta;
-          deviceOrientationData.gamma = event.gamma;
-          deviceOrientationData.hasData = true;
-        }
-      });
-
-      // Linear acceleration integration with heavy damping for subtle step parallax
-      window.addEventListener('devicemotion', (event) => {
-        if (state.arMode !== 'sensor') return;
-        const acc = event.acceleration;
-        if (!acc || acc.x === null) return;
-        const dt = Math.min(0.05, (event.interval || 16) / 1000);
-
-        // Apply deadzone to ignore sensor noise
-        const ax = Math.abs(acc.x) > 0.18 ? acc.x : 0;
-        const ay = Math.abs(acc.y) > 0.18 ? acc.y : 0;
-        const az = Math.abs(acc.z) > 0.18 ? acc.z : 0;
-
-        const localAccel = new THREE.Vector3(ax, ay, az).applyQuaternion(camera.quaternion);
-        sensorVelocity.addScaledVector(localAccel, dt * 0.45);
-        sensorVelocity.multiplyScalar(0.86); // Strong damping to prevent drift
-        sensorPosition.addScaledVector(sensorVelocity, dt);
-        sensorPosition.clampLength(0, 1.8);
-      });
-    }
-
-    const _zee = new THREE.Vector3(0, 0, 1);
-    const _euler = new THREE.Euler();
-    const _q0 = new THREE.Quaternion();
-    const _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-
-    function updateSensorCameraPose() {
-      if (!deviceOrientationData.hasData) return;
-
-      const alpha = THREE.MathUtils.degToRad(deviceOrientationData.alpha) + state.worldYawOffset;
-      const beta = THREE.MathUtils.degToRad(deviceOrientationData.beta);
-      const gamma = THREE.MathUtils.degToRad(deviceOrientationData.gamma);
-      const orient = THREE.MathUtils.degToRad(screenOrientationAngle);
-
-      _euler.set(beta, alpha, -gamma, 'YXZ');
-      camera.quaternion.setFromEuler(_euler);
-      camera.quaternion.multiply(_q1);
-      camera.quaternion.multiply(_q0.setFromAxisAngle(_zee, -orient));
-      camera.position.lerp(sensorPosition, 0.25);
-    }
-
-    async function playVideoSafely(video) {
-      video.setAttribute('playsinline', '');
-      video.setAttribute('autoplay', '');
-      video.setAttribute('muted', '');
-      video.muted = true;
-
-      if (video.readyState < 1) {
-        await Promise.race([
-          new Promise((resolve) => {
-            video.onloadedmetadata = () => resolve();
-          }),
-          new Promise((resolve) => setTimeout(resolve, 1500))
-        ]);
-      }
-
-      try {
-        await withTimeout(video.play(), 2500, 'Video playback');
-      } catch (playErr) {
-        console.warn('video.play() retry:', playErr);
-      }
-    }
-
-    async function startBackCameraStream() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        const msg = window.isSecureContext
-          ? 'Camera API is unavailable in this browser.'
-          : 'Camera requires HTTPS or localhost. Please open this page over HTTPS.';
-        showStartError(msg);
-        showToast(msg, 4000);
-        return false;
-      }
-
-      const constraintTiers = [
-        {
-          audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        },
-        {
-          audio: false,
-          video: { facingMode: 'environment' }
-        },
-        {
-          audio: false,
-          video: true
-        }
-      ];
-
-      let lastErr = null;
-      for (const constraints of constraintTiers) {
-        try {
-          const stream = await withTimeout(
-            navigator.mediaDevices.getUserMedia(constraints),
-            8000,
-            'Camera access'
-          );
-          videoEl.srcObject = stream;
-          await playVideoSafely(videoEl);
-          return true;
-        } catch (err) {
-          lastErr = err;
-          // If user explicitly denied camera permission, don't retry further tiers
-          if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
-            break;
-          }
-        }
-      }
-
-      const reason = lastErr ? `${lastErr.name || 'Error'}: ${lastErr.message || 'Permission denied'}` : 'Camera unavailable';
-      showStartError(`Could not open camera (${reason}). Check browser camera permissions and reload.`);
-      showToast('Camera blocked or unavailable', 3500);
-      return false;
-    }
-
-    // Check WebXR Support on Load (Default to Back-Camera + Gyro AR so <video> always feeds MediaPipe!)
-    let webXRSupported = false;
-    (async function checkARCapabilities() {
-      if ('xr' in navigator) {
-        try {
-          webXRSupported = await navigator.xr.isSessionSupported('immersive-ar');
-        } catch (e) {
-          webXRSupported = false;
-        }
-      }
-
-      if (!window.isSecureContext) {
-        capabilityBadge.innerHTML = '<span class="text-amber-300 font-semibold">⚠ HTTPS Required for Mobile Camera & Motion Sensors</span>';
-      } else {
-        capabilityBadge.innerHTML = '<span class="text-emerald-300 font-semibold">✓ Live Back-Camera Hand Pinch + Spatial 3D AR Ready</span>';
-      }
-
-      if (webXRSupported) {
-        btnLaunchWebXR.classList.remove('hidden');
-      }
-    })();
-
-    /**
-     * Launch Experimental WebXR Session (Note: some Android devices lock the camera exclusively to WebXR)
-     */
-    async function launchWebXR() {
-      try {
-        startErrorBox.classList.add('hidden');
-        btnLaunchWebXR.disabled = true;
-
-        await startBackCameraStream();
-
-        const session = await withTimeout(
-          navigator.xr.requestSession('immersive-ar', {
-            requiredFeatures: ['local'],
-            optionalFeatures: ['dom-overlay', 'hit-test'],
-            domOverlay: { root: document.getElementById('ar-overlay') }
-          }),
-          6000,
-          'WebXR session'
-        );
-
-        renderer.xr.setReferenceSpaceType('local');
-        await renderer.xr.setSession(session);
-
-        videoEl.style.opacity = '0';
-
-        state.arMode = 'webxr';
-        state.isRunning = true;
-        trackingModeLabel.textContent = 'WebXR 6DOF AR';
-        startScreen.classList.add('hidden');
-        renderer.setAnimationLoop(renderFrame);
-        initMediaPipeHandsAsync();
-        showToast('WebXR active! If hand tracking pauses, use Sensor AR.');
-
-        session.addEventListener('end', () => {
-          state.isRunning = false;
-          btnLaunchWebXR.disabled = false;
-          videoEl.style.opacity = '1';
-          startScreen.classList.remove('hidden');
-        });
-      } catch (err) {
-        console.warn('WebXR launch fallback to Sensor AR:', err);
-        btnLaunchWebXR.disabled = false;
-        launchSensorAR();
-      }
-    }
-
-    /**
-     * Launch Primary Back-Camera + Gyroscope AR Mode
-     * IMPORTANT: Request iOS DeviceOrientation/Motion permissions synchronously BEFORE any await!
-     */
-    function launchSensorAR() {
-      startErrorBox.classList.add('hidden');
-      btnLaunchAR.disabled = true;
-      const originalBtnText = btnLaunchAR.textContent;
-      btnLaunchAR.textContent = 'Starting Camera & AR...';
-
-      // 1. Fire iOS 13+ permission prompts synchronously inside the click gesture before any await!
-      let orientationPermPromise = Promise.resolve();
-      let motionPermPromise = Promise.resolve();
-
-      try {
-        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-          orientationPermPromise = DeviceOrientationEvent.requestPermission().catch((e) => {
-            console.warn('Orientation permission declined:', e);
-          });
-        }
-      } catch (e) {
-        console.warn('Orientation request error:', e);
-      }
-
-      try {
-        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-          motionPermPromise = DeviceMotionEvent.requestPermission().catch((e) => {
-            console.warn('Motion permission declined:', e);
-          });
-        }
-      } catch (e) {
-        console.warn('Motion request error:', e);
-      }
-
-      // 2. Continue async startup with guaranteed UI recovery on failure
-      (async () => {
-        try {
-          await Promise.allSettled([
-            withTimeout(orientationPermPromise, 4000, 'Orientation permission'),
-            withTimeout(motionPermPromise, 4000, 'Motion permission')
-          ]);
-
-          setupDeviceOrientationTracking();
-
-          const camOk = await startBackCameraStream();
-          if (!camOk) {
-            btnLaunchAR.disabled = false;
-            btnLaunchAR.textContent = originalBtnText;
-            return;
-          }
-
-          // Launch live AR canvas & HUD immediately without waiting for MediaPipe WASM!
-          videoEl.style.opacity = '1';
-          state.arMode = 'sensor';
-          state.isRunning = true;
-          trackingModeLabel.textContent = 'Back-Cam + Spatial 3D';
-          startScreen.classList.add('hidden');
-          btnLaunchAR.disabled = false;
-          btnLaunchAR.textContent = originalBtnText;
-
-          renderer.setAnimationLoop(renderFrame);
-          showToast('Pinch Index + Thumb, drag screen, or Hold to Draw!');
-
-          // Load & start MediaPipe Hands asynchronously in the background
-          initMediaPipeHandsAsync();
-        } catch (err) {
-          console.error('AR startup error:', err);
-          btnLaunchAR.disabled = false;
-          btnLaunchAR.textContent = originalBtnText;
-          showStartError(`Startup failed: ${err && err.message ? err.message : 'Unknown error'}`);
-        }
-      })();
-    }
-
-    /**
-     * ============================================================================
-     * 7. MAIN 60FPS RENDER & INTERACTION LOOP (NON-BLOCKING)
-     * ============================================================================
-     */
-    let wasDrawingLastFrame = false;
-    const _camPos = new THREE.Vector3();
-    const _camDir = new THREE.Vector3();
-    const _touchRay = new THREE.Vector3();
-
-    function renderFrame() {
-      if (!state.isRunning) return;
-
-      // 1. Update Camera Pose in Sensor Mode
-      if (state.arMode === 'sensor') {
-        updateSensorCameraPose();
-      }
-
-      // 2. Determine Active 3D Cursor Position (Direct Touch Drag > Hand Pinch > Hold-to-Draw Reticle)
-      const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
-      let cursorWorldPos = null;
-      const handRecentlySeen = state.handDetected && (performance.now() - state.lastHandSeenTime < 450);
-
-      if (state.isCanvasDragging) {
-        activeCam.getWorldPosition(_camPos);
-        _touchRay.set(state.touchNdcX, state.touchNdcY, 0.5).unproject(activeCam);
-        _camDir.subVectors(_touchRay, _camPos).normalize();
-        cursorWorldPos = _camPos.addScaledVector(_camDir, state.drawDepth);
-      } else if (handRecentlySeen && smoothedCursorWorld && !state.isTouchDrawing) {
-        cursorWorldPos = smoothedCursorWorld;
-      } else {
-        activeCam.getWorldPosition(_camPos);
-        activeCam.getWorldDirection(_camDir);
-        cursorWorldPos = _camPos.addScaledVector(_camDir, state.drawDepth);
-      }
-
-      // 3. Update 3D Air-Cursor & Real-Time Pinch Gauge Ring
-      if (cursorWorldPos) {
-        cursorGroup.visible = true;
-        cursorGroup.position.copy(cursorWorldPos);
-        cursorGroup.quaternion.copy(activeCam.quaternion);
-
-        const isDrawingNow = (handRecentlySeen && state.isPinching) || state.isTouchDrawing || state.isCanvasDragging;
-        cursorCoreMat.color.set(isDrawingNow ? '#10b981' : state.color);
-
-        const targetScale = isDrawingNow ? Math.max(0.8, state.brushSize / 0.008) : 1.0;
-        cursorCore.scale.setScalar(THREE.MathUtils.clamp(targetScale, 0.7, 2.2));
-
-        // Shrink outer halo ring dynamically as fingers get closer, snapping bright green on pinch!
-        if (isDrawingNow) {
-          cursorHalo.scale.setScalar(0.68);
-          cursorHaloMat.color.set('#10b981');
-          cursorHaloMat.opacity = 1.0;
-        } else if (handRecentlySeen) {
-          const ringScale = THREE.MathUtils.clamp(0.75 + (state.livePinchRatio - state.pinchStartThreshold) * 1.4, 0.75, 1.65);
-          cursorHalo.scale.setScalar(ringScale);
-          cursorHaloMat.color.set('#38bdf8');
-          cursorHaloMat.opacity = 0.75;
-        } else {
-          cursorHalo.scale.setScalar(1.15);
-          cursorHaloMat.color.set('#ffffff');
-          cursorHaloMat.opacity = 0.5;
-        }
-
-        // 4. Handle Zero-GC Stroke State Transitions
-        if (isDrawingNow && !wasDrawingLastFrame) {
-          beginStroke(cursorWorldPos);
-        } else if (isDrawingNow && wasDrawingLastFrame) {
-          appendStrokePoint(cursorWorldPos);
-        } else if (!isDrawingNow && wasDrawingLastFrame) {
-          endStroke();
-        }
-        wasDrawingLastFrame = isDrawingNow;
-      }
-
-      renderer.render(scene, camera);
-    }
-
-    /**
-     * ============================================================================
-     * 8. UI EVENT LISTENERS & INTERACTIVE CONTROLS
-     * ============================================================================
-     */
-    btnLaunchAR.addEventListener('click', launchSensorAR);
-    btnLaunchWebXR.addEventListener('click', launchWebXR);
-
-    // Direct Touch / Pointer Drag Drawing on 3D AR Canvas (works from frame 1!)
-    function updateTouchNdcFromEvent(e) {
-      const rect = canvasEl.getBoundingClientRect();
-      state.touchNdcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      state.touchNdcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    }
-
-    canvasEl.addEventListener('pointerdown', (e) => {
-      if (!state.isRunning) return;
-      updateTouchNdcFromEvent(e);
-      state.isCanvasDragging = true;
-      if (canvasEl.setPointerCapture) {
-        try { canvasEl.setPointerCapture(e.pointerId); } catch (_) {}
-      }
-      updateTrackingHUD();
+    $("thr").textContent = workers.length;
+  }
+
+  /* ---------------- audio drone (keeps the audio chip awake) ---------------- */
+  function armAudio() {
+    if (actx) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    actx = new AC();
+    actx.resume();
+
+    var master = actx.createGain();
+    master.gain.value = 0.05;
+    master.connect(actx.destination);
+
+    [41, 55, 82, 110, 164].forEach(function (f, i) {
+      var o = actx.createOscillator();
+      o.type = i % 2 ? "sawtooth" : "square";
+      o.frequency.value = f;
+      var g = actx.createGain();
+      g.gain.value = 0.25 / (i + 1);
+      o.connect(g); g.connect(master);
+      o.start();
     });
 
-    canvasEl.addEventListener('pointermove', (e) => {
-      if (!state.isCanvasDragging) return;
-      updateTouchNdcFromEvent(e);
-    });
+    // white noise loop
+    var len = actx.sampleRate * 2;
+    var nb = actx.createBuffer(1, len, actx.sampleRate);
+    var d = nb.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    var ns = actx.createBufferSource();
+    ns.buffer = nb; ns.loop = true;
+    var ng = actx.createGain(); ng.gain.value = 0.35;
+    ns.connect(ng); ng.connect(master);
+    ns.start();
+  }
 
-    const stopCanvasDrag = (e) => {
-      if (!state.isCanvasDragging) return;
-      state.isCanvasDragging = false;
-      if (e && canvasEl.releasePointerCapture) {
-        try { canvasEl.releasePointerCapture(e.pointerId); } catch (_) {}
-      }
-      updateTrackingHUD();
-    };
-    canvasEl.addEventListener('pointerup', stopCanvasDrag);
-    canvasEl.addEventListener('pointercancel', stopCanvasDrag);
+  /* ---------------- screen wake lock + vibration ---------------- */
+  function lockScreen() {
+    if (!("wakeLock" in navigator)) return;
+    navigator.wakeLock.request("screen").then(function (l) {
+      wakeLock = l;
+      l.addEventListener("release", function () { if (running) lockScreen(); });
+    }).catch(function () {});
+  }
 
-    // Color Swatches
-    const swatchBtns = document.querySelectorAll('.swatch-btn');
-    const customColorPicker = document.getElementById('custom-color-picker');
-
-    function selectColor(hex) {
-      state.color = hex;
-      swatchBtns.forEach((btn) => {
-        btn.classList.toggle('swatch-active', btn.dataset.color.toLowerCase() === hex.toLowerCase());
-      });
-    }
-
-    swatchBtns.forEach((btn) => {
-      btn.addEventListener('click', () => selectColor(btn.dataset.color));
-    });
-
-    customColorPicker.addEventListener('input', (e) => {
-      state.color = e.target.value;
-      swatchBtns.forEach((btn) => btn.classList.remove('swatch-active'));
-    });
-
-    // Brush Style Buttons
-    const brushBtns = document.querySelectorAll('.brush-btn');
-    brushBtns.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        state.brushStyle = btn.dataset.brush;
-        brushBtns.forEach((b) => {
-          const active = b === btn;
-          b.className = active
-            ? 'brush-btn bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition'
-            : 'brush-btn text-slate-300 hover:bg-white/10 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition';
-        });
-      });
-    });
-
-    // Brush Size Slider
-    const sliderBrushSize = document.getElementById('slider-brush-size');
-    const brushSizeLabel = document.getElementById('brush-size-label');
-    sliderBrushSize.addEventListener('input', (e) => {
-      state.brushSize = parseFloat(e.target.value);
-      brushSizeLabel.textContent = `${Math.round(state.brushSize * 1000)}mm`;
-    });
-
-    // Neon Glow Mode Toggle
-    const btnGlowToggle = document.getElementById('btn-glow-toggle');
-    const glowBtnLabel = document.getElementById('glow-btn-label');
-    btnGlowToggle.addEventListener('click', () => {
-      state.glowEnabled = !state.glowEnabled;
-      glowBtnLabel.textContent = state.glowEnabled ? 'Glow: ON' : 'Glow: OFF';
-
-      if (state.glowEnabled) {
-        btnGlowToggle.className = 'interactive glass-pill px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border-amber-300/50 bg-amber-400/20 text-amber-200 shadow-[0_0_20px_rgba(251,191,36,0.3)] active:scale-95 transition';
-      } else {
-        btnGlowToggle.className = 'interactive glass-pill px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border-white/15 text-slate-300 active:scale-95 transition';
-      }
-
-      rebuildAllStrokesWithGlow(state.glowEnabled);
-      showToast(state.glowEnabled ? 'Neon Glow Enabled' : 'Solid Matte 3D Ink');
-    });
-
-    // Hold-to-Draw Fallback Touch Button
-    const btnHoldDraw = document.getElementById('btn-hold-draw');
-    const startTouchDraw = (e) => {
-      e.preventDefault();
-      state.isTouchDrawing = true;
-      updateTrackingHUD();
-    };
-    const stopTouchDraw = (e) => {
-      if (e) e.preventDefault();
-      state.isTouchDrawing = false;
-      updateTrackingHUD();
-    };
-
-    btnHoldDraw.addEventListener('pointerdown', startTouchDraw);
-    btnHoldDraw.addEventListener('pointerup', stopTouchDraw);
-    btnHoldDraw.addEventListener('pointercancel', stopTouchDraw);
-    btnHoldDraw.addEventListener('pointerleave', stopTouchDraw);
-
-    // Undo Last Stroke
-    document.getElementById('btn-undo').addEventListener('click', () => {
-      if (strokesHistory.length === 0) {
-        showToast('Nothing to undo');
-        return;
-      }
-      const last = strokesHistory.pop();
-      if (last && last.meshGroup) {
-        worldGroup.remove(last.meshGroup);
-        disposeGroup(last.meshGroup);
-      }
-      showToast('Undid last 3D stroke');
-    });
-
-    // Double-Tap Safe Clear All
-    const btnClear = document.getElementById('btn-clear');
-    const clearBtnLabel = document.getElementById('clear-btn-label');
-    btnClear.addEventListener('click', () => {
-      if (strokesHistory.length === 0) return;
-
-      if (!state.clearConfirmPending) {
-        state.clearConfirmPending = true;
-        clearBtnLabel.textContent = 'Confirm?';
-        showToast('Tap Clear again to erase all 3D art');
-        clearTimeout(state.clearConfirmTimer);
-        state.clearConfirmTimer = setTimeout(() => {
-          state.clearConfirmPending = false;
-          clearBtnLabel.textContent = 'Clear';
-        }, 2800);
-        return;
-      }
-
-      // Confirmed clear
-      clearTimeout(state.clearConfirmTimer);
-      state.clearConfirmPending = false;
-      clearBtnLabel.textContent = 'Clear';
-
-      while (strokesHistory.length > 0) {
-        const item = strokesHistory.pop();
-        if (item && item.meshGroup) {
-          worldGroup.remove(item.meshGroup);
-          disposeGroup(item.meshGroup);
-        }
-      }
-      showToast('3D Air Canvas Cleared');
-    });
-
-    // Settings Drawer & Sliders
-    document.getElementById('btn-toggle-settings').addEventListener('click', () => {
-      settingsDrawer.classList.toggle('hidden');
-    });
-
-    const sliderPinchSens = document.getElementById('slider-pinch-sens');
-    const pinchSensLabel = document.getElementById('pinch-sens-label');
-    sliderPinchSens.addEventListener('input', (e) => {
-      const val = parseFloat(e.target.value);
-      state.pinchStartThreshold = val;
-      state.pinchReleaseThreshold = val + 0.16;
-      const tag = val >= 0.58 ? 'Super Easy' : val >= 0.46 ? 'Easy' : 'Tight';
-      pinchSensLabel.textContent = `${tag} (${val.toFixed(2)})`;
-    });
-
-    const sliderDepth = document.getElementById('slider-depth');
-    const depthValueLabel = document.getElementById('depth-value-label');
-    sliderDepth.addEventListener('input', (e) => {
-      state.drawDepth = parseFloat(e.target.value);
-      depthValueLabel.textContent = `${state.drawDepth.toFixed(2)} m`;
-    });
-
-    const sliderSmooth = document.getElementById('slider-smooth');
-    const smoothValueLabel = document.getElementById('smooth-value-label');
-    sliderSmooth.addEventListener('input', (e) => {
-      state.smoothingFactor = parseFloat(e.target.value);
-      const desc = state.smoothingFactor < 0.32 ? 'Ultra' : state.smoothingFactor < 0.55 ? 'Fast' : 'Instant';
-      smoothValueLabel.textContent = `${desc} (${state.smoothingFactor.toFixed(2)})`;
-    });
-
-    const sliderGlowIntensity = document.getElementById('slider-glow-intensity');
-    const glowIntensityLabel = document.getElementById('glow-intensity-label');
-    sliderGlowIntensity.addEventListener('input', (e) => {
-      state.glowIntensity = parseFloat(e.target.value);
-      glowIntensityLabel.textContent = `${Math.round(state.glowIntensity * 100)}%`;
-      if (state.glowEnabled) {
-        rebuildAllStrokesWithGlow(true);
-      }
-    });
-
-    // Re-Anchor World Space
-    document.getElementById('btn-recenter-world').addEventListener('click', () => {
-      sensorPosition.set(0, 0, 0);
-      sensorVelocity.set(0, 0, 0);
-      showToast('3D Spatial Anchor Re-Centered');
-    });
-
-    // Toggle Mini Hand Skeleton PIP
-    document.getElementById('btn-toggle-pip').addEventListener('click', () => {
-      handPipCanvas.classList.toggle('hidden');
-    });
-
-    // Clean View / Hide HUD for Screenshots
-    document.getElementById('btn-hide-ui').addEventListener('click', () => {
-      topHud.classList.add('hud-hidden');
-      bottomHud.classList.add('hud-hidden');
-      settingsDrawer.classList.add('hidden');
-      btnShowUi.classList.remove('hidden');
-    });
-
-    btnShowUi.addEventListener('click', () => {
-      topHud.classList.remove('hud-hidden');
-      bottomHud.classList.remove('hud-hidden');
-      btnShowUi.classList.add('hidden');
-    });
-  </script>
-</body>
-</html>
+  function buzz() {
+    if (!running || !navigator.vibrate) return;
+    navigator.vibrate([250, 120, 
