@@ -1,519 +1,1412 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Air Draw AR</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>AeroDraw 3D — Mobile WebAR Air-Drawing Studio</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <!-- Tailwind CSS for modern responsive glassmorphic HUD -->
+  <script src="https://cdn.tailwindcss.com"></script>
 
-<style>
-* {
-    box-sizing: border-box;
-}
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
 
-body {
-    margin: 0;
-    background: #05090e;
-    color: white;
-    font-family: Arial, sans-serif;
-    overflow: hidden;
-}
+  <!-- MediaPipe Hands via jsDelivr CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
 
-#camera {
-    position: relative;
-    width: 100%;
-    height: 100dvh;
-    background: #080d14;
-    overflow: hidden;
-}
+  <!-- Import Map for Three.js ES Modules -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
 
-#video {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    transform: scaleX(-1);
-}
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
 
-#drawCanvas, #cursorCanvas {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    transform: scaleX(-1);
-    pointer-events: none;
-}
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #06080d;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #f8fafc;
+      touch-action: none;
+    }
 
-#cursorCanvas {
-    z-index: 2;
-}
+    /* Fullscreen Back-Camera Video Layer (used in Sensor/Fallback AR & Hand Tracking) */
+    #camera-feed {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 1;
+      background: #05070a;
+    }
 
-.top {
-    position: absolute;
-    top: 20px;
-    left: 0;
-    right: 0;
-    text-align: center;
-    z-index: 5;
-    pointer-events: none;
-}
+    /* Three.js WebGL / WebXR Canvas */
+    #ar-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
 
-.top h2 {
-    margin: 0;
-    font-size: 24px;
-    text-shadow: 0 2px 10px black;
-}
+    /* WebXR DOM Overlay Container */
+    #ar-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      pointer-events: none;
+      padding: max(12px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom)) 14px;
+    }
 
-#status {
-    display: inline-block;
-    margin-top: 10px;
-    background: #101c2bcc;
-    border: 1px solid #34445b;
-    border-radius: 30px;
-    padding: 10px 16px;
-    font-size: 13px;
-}
+    .interactive {
+      pointer-events: auto;
+    }
 
-#controls {
-    position: absolute;
-    bottom: 20px;
-    left: 10px;
-    right: 10px;
-    z-index: 5;
-    padding: 15px;
-    background: #0b1422eF;
-    border: 1px solid #28374c;
-    border-radius: 20px;
-}
+    /* Glassmorphism Panels */
+    .glass-panel {
+      background: rgba(12, 16, 26, 0.68);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    }
 
-.colors {
-    display: flex;
-    justify-content: center;
-    gap: 15px;
-    margin-bottom: 15px;
-}
+    .glass-pill {
+      background: rgba(12, 16, 26, 0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
 
-.color {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: 3px solid transparent;
-    padding: 0;
-}
+    /* Custom Range Sliders */
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255, 255, 255, 0.18);
+      height: 6px;
+      border-radius: 999px;
+      outline: none;
+    }
 
-.color.active {
-    border-color: white;
-    transform: scale(1.15);
-}
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #38bdf8;
+      border: 2px solid #ffffff;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.8);
+      cursor: pointer;
+    }
 
-.buttons {
-    display: flex;
-    justify-content: center;
-    gap: 10px;
-}
+    /* Color Swatch Ring */
+    .swatch-active {
+      transform: scale(1.18);
+      box-shadow: 0 0 0 2px #0f172a, 0 0 0 4px #ffffff, 0 0 16px currentColor;
+    }
 
-button {
-    background: #1e3046;
-    border: 0;
-    color: white;
-    padding: 13px 18px;
-    border-radius: 12px;
-    font-weight: bold;
-}
+    /* Pulsing Pinch Indicator */
+    @keyframes pulse-ring {
+      0% { transform: scale(0.92); opacity: 0.9; }
+      70% { transform: scale(1.35); opacity: 0; }
+      100% { transform: scale(1.35); opacity: 0; }
+    }
 
-#clear {
-    background: #c03949;
-}
+    .pinch-pulse::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 9999px;
+      border: 2px solid #22d3ee;
+      animation: pulse-ring 1.4s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+    }
 
-#start {
-    background: #087eeb;
-}
+    /* Mini Hand Skeleton PIP Canvas */
+    #hand-pip {
+      width: 92px;
+      height: 68px;
+      border-radius: 12px;
+      background: rgba(8, 12, 20, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }
 
-#brush {
-    width: 100%;
-    margin-top: 12px;
-    accent-color: #00e6a0;
-}
+    /* Smooth hide HUD transition */
+    .hud-hidden {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transform: translateY(12px);
+    }
 
-#instructions {
-    position: absolute;
-    top: 125px;
-    left: 15px;
-    z-index: 4;
-    background: #101c2bcc;
-    border-radius: 12px;
-    padding: 12px;
-    font-size: 12px;
-    line-height: 1.7;
-    pointer-events: none;
-}
-
-</style>
+    .hud-transition {
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+  </style>
 </head>
-
 <body>
+  <!-- Hidden / Background Video Element for Back Camera Feed -->
+  <video id="camera-feed" playsinline autoplay muted></video>
 
-<div id="camera">
+  <!-- 3D WebGL / WebXR Canvas -->
+  <canvas id="ar-canvas"></canvas>
 
-    <video id="video" autoplay playsinline muted></video>
-
-    <canvas id="drawCanvas"></canvas>
-    <canvas id="cursorCanvas"></canvas>
-
-    <div class="top">
-        <h2>Air Draw AR</h2>
-        <div id="status">Press Start Camera</div>
-    </div>
-
-    <div id="instructions">
-        ☝️ + 👍 Touch fingers = Draw<br>
-        Separate fingers = Stop drawing<br>
-        Move your hand to draw
-    </div>
-
-    <div id="controls">
-
-        <div class="colors">
-            <button class="color active" style="background:#00e6a0"
-                data-color="#00e6a0"></button>
-
-            <button class="color" style="background:#ffffff"
-                data-color="#ffffff"></button>
-
-            <button class="color" style="background:#ff3158"
-                data-color="#ff3158"></button>
-
-            <button class="color" style="background:#4287ff"
-                data-color="#4287ff"></button>
-
-            <button class="color" style="background:#ffcb45"
-                data-color="#ffcb45"></button>
-
-            <button class="color" style="background:#bd70ff"
-                data-color="#bd70ff"></button>
+  <!-- Main WebXR DOM Overlay & Mobile HUD -->
+  <div id="ar-overlay">
+    <!-- TOP BAR: Status, Hand Tracking PIP & Quick Controls -->
+    <div id="top-hud" class="flex items-start justify-between gap-2 hud-transition">
+      <!-- Left: Tracking & Pinch Status Badge -->
+      <div class="flex flex-col gap-2">
+        <div class="glass-pill rounded-2xl px-3.5 py-2 flex items-center gap-2.5">
+          <span id="status-dot" class="relative w-3 h-3 rounded-full bg-amber-400 shrink-0"></span>
+          <div class="flex flex-col">
+            <span id="tracking-mode-label" class="text-[11px] font-semibold uppercase tracking-wider text-sky-300">Initializing</span>
+            <span id="pinch-status-text" class="text-xs font-medium text-slate-200">Pinch Index + Thumb to Draw</span>
+          </div>
         </div>
 
-        <div class="buttons">
-            <button id="start" onclick="startCamera()">
-                Start Camera
-            </button>
+        <!-- Toast Notification Pill (replaces alert/confirm) -->
+        <div id="toast-banner" class="hidden glass-pill rounded-xl px-3 py-1.5 text-xs font-medium text-cyan-200 border-cyan-400/40 max-w-[250px]">
+          Ready
+        </div>
+      </div>
 
-            <button id="clear" onclick="clearDrawing()">
-                Clear Drawing
-            </button>
+      <!-- Right: Hand Tracking Mini-Visualizer + Hide UI / Settings -->
+      <div class="flex items-center gap-2">
+        <canvas id="hand-pip" width="184" height="136" class="hidden sm:block"></canvas>
+
+        <button id="btn-toggle-settings" class="interactive glass-pill w-11 h-11 rounded-2xl flex items-center justify-center text-slate-100 active:scale-95 transition" title="Depth & Precision Settings" aria-label="Depth & Precision Settings">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+          </svg>
+        </button>
+
+        <button id="btn-hide-ui" class="interactive glass-pill w-11 h-11 rounded-2xl flex items-center justify-center text-slate-100 active:scale-95 transition" title="Clean View / Screenshot Mode" aria-label="Hide UI">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Floating Restore UI Button (Only visible when HUD is hidden) -->
+    <button id="btn-show-ui" class="hidden interactive self-end glass-pill px-4 py-2.5 rounded-full text-xs font-semibold text-white flex items-center gap-2 shadow-lg active:scale-95">
+      <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+      </svg>
+      Show Controls
+    </button>
+
+    <!-- Collapsible Precision & Depth Drawer -->
+    <div id="settings-drawer" class="hidden interactive glass-panel rounded-2xl p-4 mx-auto w-full max-w-md space-y-3.5 hud-transition">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-bold uppercase tracking-wider text-cyan-300">3D Spatial & Pinch Precision</span>
+        <button id="btn-recenter-world" class="text-xs font-semibold bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg text-slate-200 active:scale-95">
+          Re-Anchor Space
+        </button>
+      </div>
+
+      <!-- Drawing Depth Offset -->
+      <div class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="text-slate-300">Air Canvas Distance</span>
+          <span id="depth-value-label" class="font-mono text-cyan-300">0.45 m</span>
+        </div>
+        <input id="slider-depth" type="range" min="0.22" max="1.10" step="0.02" value="0.45" class="w-full" />
+      </div>
+
+      <!-- Smoothing Filter Strength -->
+      <div class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="text-slate-300">Stabilizer Smoothing</span>
+          <span id="smooth-value-label" class="font-mono text-cyan-300">High (0.32)</span>
+        </div>
+        <input id="slider-smooth" type="range" min="0.12" max="0.85" step="0.02" value="0.32" class="w-full" />
+      </div>
+
+      <!-- Glow Intensity Slider -->
+      <div class="space-y-1">
+        <div class="flex justify-between text-xs">
+          <span class="text-slate-300">Neon Glow Aura</span>
+          <span id="glow-intensity-label" class="font-mono text-cyan-300">100%</span>
+        </div>
+        <input id="slider-glow-intensity" type="range" min="0.2" max="1.8" step="0.1" value="1.0" class="w-full" />
+      </div>
+
+      <!-- Hand Skeleton PIP Toggle for Mobile -->
+      <div class="flex items-center justify-between pt-1 border-t border-white/10">
+        <span class="text-xs text-slate-300">Show Hand Tracking Preview</span>
+        <button id="btn-toggle-pip" class="px-3 py-1 rounded-lg text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+          Toggle Mini-View
+        </button>
+      </div>
+    </div>
+
+    <!-- BOTTOM DOCK: Tools, Colors, Brush Size, Glow & Fallback Draw Button -->
+    <div id="bottom-hud" class="flex flex-col gap-2.5 max-w-xl w-full mx-auto hud-transition">
+      <!-- Row 1: Manual Touch Draw Trigger + Undo / Clear + Glow Toggle -->
+      <div class="flex items-center justify-between gap-2">
+        <!-- Undo & Clear Group -->
+        <div class="interactive glass-pill rounded-2xl p-1.5 flex items-center gap-1">
+          <button id="btn-undo" class="px-3 py-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-white/10 active:scale-95 flex items-center gap-1.5" title="Undo Last Stroke">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+            </svg>
+            <span>Undo</span>
+          </button>
+          <div class="w-px h-5 bg-white/15"></div>
+          <button id="btn-clear" class="px-3 py-2 rounded-xl text-xs font-semibold text-rose-300 hover:bg-rose-500/20 active:scale-95 flex items-center gap-1.5" title="Clear Canvas">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            <span id="clear-btn-label">Clear</span>
+          </button>
         </div>
 
-        <input id="brush" type="range"
-            min="2" max="25" value="6">
+        <!-- Hold-to-Draw Touch Fallback Button (Draws with Phone Movement if Hand isn't visible) -->
+        <button id="btn-hold-draw" class="interactive glass-pill px-4 py-2.5 rounded-2xl text-xs font-bold tracking-wide text-white border-cyan-400/40 bg-gradient-to-r from-cyan-500/25 to-blue-600/25 active:from-cyan-400 active:to-blue-500 active:text-slate-950 active:scale-95 transition flex items-center gap-2 shadow-lg">
+          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+          <span>HOLD TO DRAW</span>
+        </button>
 
+        <!-- Neon Glow Mode Toggle -->
+        <button id="btn-glow-toggle" class="interactive glass-pill px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border-amber-300/50 bg-amber-400/20 text-amber-200 shadow-[0_0_20px_rgba(251,191,36,0.3)] active:scale-95 transition">
+          <svg class="w-4 h-4 text-amber-300" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z" />
+          </svg>
+          <span id="glow-btn-label">Glow: ON</span>
+        </button>
+      </div>
+
+      <!-- Row 2: Main Creative Palette & Brush Controls -->
+      <div class="interactive glass-panel rounded-3xl p-3.5 flex flex-col gap-3">
+        <!-- Color Swatches Row -->
+        <div class="flex items-center justify-between gap-2 overflow-x-auto py-1 px-1">
+          <div id="color-swatches" class="flex items-center gap-2.5">
+            <button data-color="#00f5ff" style="background:#00f5ff; color:#00f5ff;" class="swatch-btn swatch-active w-7 h-7 rounded-full transition" aria-label="Neon Cyan"></button>
+            <button data-color="#ff2a85" style="background:#ff2a85; color:#ff2a85;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Electric Magenta"></button>
+            <button data-color="#39ff14" style="background:#39ff14; color:#39ff14;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Laser Lime"></button>
+            <button data-color="#ffd000" style="background:#ffd000; color:#ffd000;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Solar Gold"></button>
+            <button data-color="#a855f7" style="background:#a855f7; color:#a855f7;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Ultraviolet"></button>
+            <button data-color="#ff5e3a" style="background:#ff5e3a; color:#ff5e3a;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Plasma Coral"></button>
+            <button data-color="#ffffff" style="background:#ffffff; color:#ffffff;" class="swatch-btn w-7 h-7 rounded-full transition" aria-label="Pure White"></button>
+          </div>
+
+          <!-- Custom Color Picker -->
+          <label class="relative w-7 h-7 rounded-full overflow-hidden border border-white/40 cursor-pointer shrink-0 flex items-center justify-center bg-gradient-to-tr from-pink-500 via-amber-400 to-cyan-400" title="Custom Color">
+            <input id="custom-color-picker" type="color" value="#00f5ff" class="opacity-0 absolute inset-0 w-full h-full cursor-pointer" />
+            <span class="text-[11px] font-bold text-slate-950">+</span>
+          </label>
+        </div>
+
+        <!-- Brush Style & Thickness Row -->
+        <div class="flex items-center justify-between gap-3 pt-1 border-t border-white/10">
+          <!-- Brush Style Selector -->
+          <div class="flex items-center bg-white/5 rounded-xl p-1 gap-1 shrink-0">
+            <button data-brush="tube" class="brush-btn bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition">
+              3D Tube
+            </button>
+            <button data-brush="ribbon" class="brush-btn text-slate-300 hover:bg-white/10 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition">
+              Ribbon
+            </button>
+            <button data-brush="sparkle" class="brush-btn text-slate-300 hover:bg-white/10 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition">
+              Stardust
+            </button>
+          </div>
+
+          <!-- Stroke Thickness Slider -->
+          <div class="flex items-center gap-2 flex-1 min-w-0">
+            <span class="text-[11px] text-slate-400 shrink-0">Size</span>
+            <input id="slider-brush-size" type="range" min="0.003" max="0.028" step="0.001" value="0.009" class="w-full" />
+            <span id="brush-size-label" class="text-[11px] font-mono text-slate-200 w-9 text-right shrink-0">9mm</span>
+          </div>
+        </div>
+      </div>
     </div>
-</div>
+  </div>
 
-<script>
+  <!-- START / PERMISSIONS ONBOARDING SCREEN -->
+  <div id="start-screen" class="fixed inset-0 z-30 flex items-center justify-center p-5 bg-slate-950/90 backdrop-blur-xl">
+    <div class="glass-panel rounded-3xl p-6 max-w-md w-full space-y-5 border border-cyan-400/25 shadow-2xl">
+      <div class="flex items-center gap-3.5">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center shadow-[0_0_25px_rgba(34,211,238,0.5)] shrink-0">
+          <svg class="w-7 h-7 text-slate-950" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight text-white">AeroDraw 3D</h1>
+          <p class="text-xs text-cyan-300 font-medium">Spatial Back-Camera AR Air Sculpting</p>
+        </div>
+      </div>
 
-const video = document.getElementById("video");
+      <div class="space-y-3 text-xs text-slate-300 leading-relaxed bg-white/5 rounded-2xl p-4 border border-white/10">
+        <div class="flex items-start gap-2.5">
+          <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+          <p><strong class="text-white">Pinch Index + Thumb Together:</strong> Hold your hand in front of the back camera and touch your index fingertip and thumb tip together to draw 3D strokes in mid-air.</p>
+        </div>
+        <div class="flex items-start gap-2.5">
+          <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+          <p><strong class="text-white">Walk Around Your Art:</strong> Your strokes are anchored in 3D space—walk around, under, and through your glowing sculptures from any angle.</p>
+        </div>
+        <div class="flex items-start gap-2.5">
+          <span class="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-300 font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
+          <p><strong class="text-white">Neon Glow & Brushes:</strong> Toggle luminous additive glow shells, switch between 3D Tubes, Calligraphy Ribbons, or Stardust, or use <em>Hold to Draw</em> anytime.</p>
+        </div>
+      </div>
 
-const drawCanvas = document.getElementById("drawCanvas");
-const cursorCanvas = document.getElementById("cursorCanvas");
+      <div id="capability-badge" class="text-[11px] text-center text-slate-400 bg-slate-900/80 py-2 px-3 rounded-xl border border-white/10">
+        Checking device AR & camera capabilities...
+      </div>
 
-const drawCtx = drawCanvas.getContext("2d");
-const cursorCtx = cursorCanvas.getContext("2d");
+      <div class="flex flex-col gap-2.5">
+        <button id="btn-launch-ar" class="w-full py-3.5 px-5 rounded-2xl font-bold text-sm text-slate-950 bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500 hover:brightness-110 active:scale-[0.98] transition shadow-[0_0_25px_rgba(56,189,248,0.45)]">
+          Start Back-Camera AR Studio
+        </button>
 
-const statusText = document.getElementById("status");
+        <button id="btn-launch-sensor-ar" class="hidden w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-cyan-200 bg-white/10 hover:bg-white/15 active:scale-[0.98] transition">
+          Launch in Compatibility Camera + Gyro Mode
+        </button>
+      </div>
+    </div>
+  </div>
 
-let stream = null;
-let hands = null;
-let running = false;
-let processing = false;
+  <!-- APPLICATION LOGIC -->
+  <script type="module">
+    import * as THREE from 'three';
 
-let drawing = false;
-let lastPoint = null;
-let smoothPoint = null;
+    /**
+     * ============================================================================
+     * 1. APPLICATION STATE & CONFIGURATION
+     * ============================================================================
+     */
+    const state = {
+      isRunning: false,
+      arMode: 'none', // 'webxr' | 'sensor'
+      isPinching: false,
+      isTouchDrawing: false,
+      handDetected: false,
+      lastHandSeenTime: 0,
 
-let brushColor = "#00e6a0";
-let brushSize = 6;
+      // Brush & Visual Settings
+      color: '#00f5ff',
+      brushSize: 0.009,       // meters (9mm default)
+      brushStyle: 'tube',     // 'tube' | 'ribbon' | 'sparkle'
+      glowEnabled: true,
+      glowIntensity: 1.0,
+      drawDepth: 0.45,        // meters in front of camera
+      smoothingFactor: 0.32,  // EMA alpha (lower = smoother, higher = snappier)
 
-let lastHandSeen = 0;
+      // Pinch Hysteresis Thresholds (normalized hand landmark distance)
+      pinchStartThreshold: 0.048,
+      pinchReleaseThreshold: 0.072,
 
-function resizeCanvas() {
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-
-    drawCanvas.width = width;
-    drawCanvas.height = height;
-
-    cursorCanvas.width = width;
-    cursorCanvas.height = height;
-
-    drawCtx.lineCap = "round";
-    drawCtx.lineJoin = "round";
-}
-
-function clearDrawing() {
-    drawCtx.clearRect(
-        0, 0, drawCanvas.width, drawCanvas.height
-    );
-}
-
-document.querySelectorAll(".color").forEach(button => {
-    button.addEventListener("click", () => {
-
-        brushColor = button.dataset.color;
-
-        document.querySelectorAll(".color").forEach(b => {
-            b.classList.remove("active");
-        });
-
-        button.classList.add("active");
-    });
-});
-
-document.getElementById("brush").addEventListener("input", e => {
-    brushSize = Number(e.target.value);
-});
-
-async function startCamera() {
-
-    stopCamera();
-
-    statusText.textContent = "Starting camera...";
-
-    try {
-
-        stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-                facingMode: "user",
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                frameRate: { ideal: 30, max: 30 }
-            }
-        });
-
-        video.srcObject = stream;
-
-        await video.play();
-
-        resizeCanvas();
-
-        if (!hands) {
-
-            statusText.textContent = "Loading hand tracking...";
-
-            hands = new Hands({
-                locateFile: file =>
-                    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 0,
-                minDetectionConfidence: 0.65,
-                minTrackingConfidence: 0.65
-            });
-
-            hands.onResults(onResults);
-        }
-
-        running = true;
-
-        statusText.textContent = "Show your hand to the camera";
-
-        processFrame();
-
-    } catch (error) {
-
-        console.error(error);
-
-        statusText.textContent =
-            "Camera error. Allow camera access and reload.";
-
-    }
-}
-
-function stopCamera() {
-
-    running = false;
-    drawing = false;
-    lastPoint = null;
-    smoothPoint = null;
-
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-    }
-
-    video.srcObject = null;
-
-    cursorCtx.clearRect(
-        0, 0, cursorCanvas.width, cursorCanvas.height
-    );
-}
-
-async function processFrame() {
-
-    if (!running || processing) return;
-
-    processing = true;
-
-    try {
-        if (video.readyState >= 2) {
-            await hands.send({ image: video });
-        }
-    } catch (error) {
-        console.error(error);
-    }
-
-    processing = false;
-
-    if (running) {
-        requestAnimationFrame(processFrame);
-    }
-}
-
-function onResults(results) {
-
-    cursorCtx.clearRect(
-        0, 0, cursorCanvas.width, cursorCanvas.height
-    );
-
-    if (!results.multiHandLandmarks ||
-        results.multiHandLandmarks.length === 0) {
-
-        drawing = false;
-        lastPoint = null;
-        smoothPoint = null;
-
-        statusText.textContent = "Show your hand to the camera";
-        return;
-    }
-
-    lastHandSeen = performance.now();
-
-    const landmarks = results.multiHandLandmarks[0];
-
-    // Index fingertip = landmark 8
-    // Thumb fingertip = landmark 4
-
-    const index = landmarks[8];
-    const thumb = landmarks[4];
-
-    const width = drawCanvas.width;
-    const height = drawCanvas.height;
-
-    const point = {
-        x: index.x * width,
-        y: index.y * height
+      // World Anchor Offset (for re-centering in sensor AR mode)
+      worldYawOffset: 0,
+      clearConfirmPending: false,
+      clearConfirmTimer: null
     };
 
-    // Calculate thumb-to-index distance
-    const dx = (index.x - thumb.x) * width;
-    const dy = (index.y - thumb.y) * height;
+    /**
+     * ============================================================================
+     * 2. DOM ELEMENT REFERENCES & UI HELPERS
+     * ============================================================================
+     */
+    const videoEl = document.getElementById('camera-feed');
+    const canvasEl = document.getElementById('ar-canvas');
+    const startScreen = document.getElementById('start-screen');
+    const capabilityBadge = document.getElementById('capability-badge');
+    const btnLaunchAR = document.getElementById('btn-launch-ar');
+    const btnLaunchSensorAR = document.getElementById('btn-launch-sensor-ar');
 
-    const pinchDistance =
-        Math.hypot(dx, dy) / Math.min(width, height);
+    const statusDot = document.getElementById('status-dot');
+    const trackingModeLabel = document.getElementById('tracking-mode-label');
+    const pinchStatusText = document.getElementById('pinch-status-text');
+    const toastBanner = document.getElementById('toast-banner');
 
-    // Draw using pinch detection with hysteresis
-    if (!drawing && pinchDistance < 0.045) {
+    const handPipCanvas = document.getElementById('hand-pip');
+    const handPipCtx = handPipCanvas.getContext('2d');
 
-        drawing = true;
-        lastPoint = null;
-        smoothPoint = point;
+    const topHud = document.getElementById('top-hud');
+    const bottomHud = document.getElementById('bottom-hud');
+    const settingsDrawer = document.getElementById('settings-drawer');
+    const btnShowUi = document.getElementById('btn-show-ui');
 
-    } else if (drawing && pinchDistance > 0.065) {
-
-        drawing = false;
-        lastPoint = null;
-        smoothPoint = null;
-
+    let toastTimeout = null;
+    function showToast(message, duration = 2600) {
+      toastBanner.textContent = message;
+      toastBanner.classList.remove('hidden');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toastBanner.classList.add('hidden');
+      }, duration);
     }
 
-    // Smooth hand movement
-    if (drawing) {
+    /**
+     * ============================================================================
+     * 3. THREE.JS SCENE, LIGHTING, CURSOR & WORLD ANCHOR SETUP
+     * ============================================================================
+     */
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvasEl,
+      antialias: true,
+      alpha: true,
+      powerPreference: 'high-performance'
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-        if (!smoothPoint) {
-            smoothPoint = point;
-        } else {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.02, 50);
+    scene.add(camera);
 
-            const smoothing = 0.55;
+    // Root container for all 3D air-drawings (allows clean re-anchoring)
+    const worldGroup = new THREE.Group();
+    scene.add(worldGroup);
 
-            smoothPoint.x +=
-                (point.x - smoothPoint.x) * smoothing;
+    // Subtle 3D spatial lighting so non-glowing solid strokes have volumetric shading
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    scene.add(ambientLight);
 
-            smoothPoint.y +=
-                (point.y - smoothPoint.y) * smoothing;
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.35);
+    dirLight.position.set(1.5, 3.0, 2.0);
+    scene.add(dirLight);
+
+    // 3D Precision Air-Cursor (Core Sphere + Outer Reticle Halo)
+    const cursorGroup = new THREE.Group();
+    const cursorCoreGeo = new THREE.SphereGeometry(0.008, 24, 24);
+    const cursorCoreMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(state.color),
+      transparent: true,
+      opacity: 0.95
+    });
+    const cursorCore = new THREE.Mesh(cursorCoreGeo, cursorCoreMat);
+
+    const cursorHaloGeo = new THREE.RingGeometry(0.012, 0.0155, 32);
+    const cursorHaloMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.75,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const cursorHalo = new THREE.Mesh(cursorHaloGeo, cursorHaloMat);
+
+    cursorGroup.add(cursorCore);
+    cursorGroup.add(cursorHalo);
+    cursorGroup.visible = false;
+    scene.add(cursorGroup);
+
+    // Handle Window Resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    /**
+     * ============================================================================
+     * 4. VOLUMETRIC 3D STROKE ENGINE (TUBE, CALLIGRAPHY RIBBON & STARDUST GLOW)
+     * ============================================================================
+     */
+    const strokesHistory = []; // Array of stroke objects for Undo / Clear / Glow toggling
+    let activeStroke = null;
+
+    // Reusable vector math helpers
+    const _vA = new THREE.Vector3();
+    const _vB = new THREE.Vector3();
+    const _tangent = new THREE.Vector3();
+    const _normal = new THREE.Vector3();
+    const _binormal = new THREE.Vector3();
+    const _upRef = new THREE.Vector3(0, 1, 0);
+
+    /**
+     * Builds a smooth 3D mesh (core + optional additive neon glow shells) from an array of 3D points.
+     * Uses Catmull-Rom spline interpolation so strokes look silky-smooth from every 360° angle.
+     */
+    function createVolumetricStrokeGroup(points, options) {
+      const group = new THREE.Group();
+      if (points.length < 2) return group;
+
+      const baseColor = new THREE.Color(options.color);
+      const radius = options.size;
+
+      // 1. STARDUST SPARKLE BRUSH
+      if (options.style === 'sparkle') {
+        const curve = new THREE.CatmullRomCurve3(points);
+        const count = Math.max(12, Math.floor(curve.getLength() * 240));
+        const sampled = curve.getSpacedPoints(count);
+
+        const positions = new Float32Array(sampled.length * 3);
+        const colors = new Float32Array(sampled.length * 3);
+
+        sampled.forEach((pt, idx) => {
+          const jitter = radius * 1.4;
+          positions[idx * 3] = pt.x + (Math.random() - 0.5) * jitter;
+          positions[idx * 3 + 1] = pt.y + (Math.random() - 0.5) * jitter;
+          positions[idx * 3 + 2] = pt.z + (Math.random() - 0.5) * jitter;
+
+          const bright = 0.75 + Math.random() * 0.45;
+          colors[idx * 3] = Math.min(1, baseColor.r * bright + 0.15);
+          colors[idx * 3 + 1] = Math.min(1, baseColor.g * bright + 0.15);
+          colors[idx * 3 + 2] = Math.min(1, baseColor.b * bright + 0.15);
+        });
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        // Procedural soft circular sprite texture
+        const spriteCanvas = document.createElement('canvas');
+        spriteCanvas.width = 64;
+        spriteCanvas.height = 64;
+        const sCtx = spriteCanvas.getContext('2d');
+        const grad = sCtx.createRadialGradient(32, 32, 2, 32, 32, 30);
+        grad.addColorStop(0, 'rgba(255,255,255,1)');
+        grad.addColorStop(0.35, 'rgba(255,255,255,0.85)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        sCtx.fillStyle = grad;
+        sCtx.fillRect(0, 0, 64, 64);
+        const spriteTex = new THREE.CanvasTexture(spriteCanvas);
+
+        const mat = new THREE.PointsMaterial({
+          size: radius * 4.5,
+          map: spriteTex,
+          vertexColors: true,
+          transparent: true,
+          opacity: options.glow ? 0.95 : 0.85,
+          blending: options.glow ? THREE.AdditiveBlending : THREE.NormalBlending,
+          depthWrite: false
+        });
+
+        const ptsMesh = new THREE.Points(geo, mat);
+        group.add(ptsMesh);
+        return group;
+      }
+
+      // 2. 3D SMOOTH TUBE OR CALLIGRAPHY RIBBON
+      const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.5);
+      const curveLength = curve.getLength();
+      const tubularSegments = Math.min(480, Math.max(12, Math.floor(curveLength * 140)));
+
+      if (options.style === 'tube') {
+        const radialSegments = 12;
+        const coreGeo = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
+
+        const coreMat = options.glow
+          ? new THREE.MeshBasicMaterial({
+              color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.35)
+            })
+          : new THREE.MeshStandardMaterial({
+              color: baseColor,
+              roughness: 0.32,
+              metalness: 0.15
+            });
+
+        const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+        group.add(coreMesh);
+
+        // End caps so tubes look cleanly rounded from every angle
+        const capGeo = new THREE.SphereGeometry(radius, 12, 12);
+        const startCap = new THREE.Mesh(capGeo, coreMat);
+        startCap.position.copy(points[0]);
+        const endCap = new THREE.Mesh(capGeo, coreMat);
+        endCap.position.copy(points[points.length - 1]);
+        group.add(startCap, endCap);
+
+        // Additive Neon Glow Aura Shells (works cleanly over transparent AR camera!)
+        if (options.glow) {
+          const innerGlowGeo = new THREE.TubeGeometry(curve, tubularSegments, radius * 1.85, 10, false);
+          const innerGlowMat = new THREE.MeshBasicMaterial({
+            color: baseColor,
+            transparent: true,
+            opacity: Math.min(0.85, 0.34 * options.glowIntensity),
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+          });
+          group.add(new THREE.Mesh(innerGlowGeo, innerGlowMat));
+
+          const outerGlowGeo = new THREE.TubeGeometry(curve, Math.max(8, Math.floor(tubularSegments * 0.6)), radius * 3.1, 8, false);
+          const outerGlowMat = new THREE.MeshBasicMaterial({
+            color: baseColor,
+            transparent: true,
+            opacity: Math.min(0.55, 0.15 * options.glowIntensity),
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+          });
+          group.add(new THREE.Mesh(outerGlowGeo, outerGlowMat));
+        }
+      } else if (options.style === 'ribbon') {
+        // Tapered Volumetric 3D Calligraphy Ribbon
+        const sampled = curve.getSpacedPoints(tubularSegments);
+        const positions = [];
+        const indices = [];
+
+        for (let i = 0; i < sampled.length; i++) {
+          const t = i / (sampled.length - 1);
+          // Smooth taper at start and end of stroke
+          const taper = Math.sin(Math.pow(t, 0.75) * Math.PI);
+          const halfWidth = Math.max(radius * 0.25, radius * 2.2 * (0.25 + 0.75 * taper));
+
+          const curr = sampled[i];
+          const prev = sampled[Math.max(0, i - 1)];
+          const next = sampled[Math.min(sampled.length - 1, i + 1)];
+          _tangent.subVectors(next, prev).normalize();
+
+          _binormal.crossVectors(_tangent, _upRef);
+          if (_binormal.lengthSq() < 0.001) {
+            _binormal.set(1, 0, 0);
+          }
+          _binormal.normalize();
+
+          _vA.copy(curr).addScaledVector(_binormal, -halfWidth);
+          _vB.copy(curr).addScaledVector(_binormal, halfWidth);
+
+          positions.push(_vA.x, _vA.y, _vA.z, _vB.x, _vB.y, _vB.z);
+
+          if (i < sampled.length - 1) {
+            const base = i * 2;
+            indices.push(base, base + 1, base + 2);
+            indices.push(base + 1, base + 3, base + 2);
+          }
         }
 
-        if (lastPoint) {
+        const ribbonGeo = new THREE.BufferGeometry();
+        ribbonGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        ribbonGeo.setIndex(indices);
+        ribbonGeo.computeVertexNormals();
 
-            drawCtx.beginPath();
+        const ribbonMat = options.glow
+          ? new THREE.MeshBasicMaterial({
+              color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.3),
+              side: THREE.DoubleSide
+            })
+          : new THREE.MeshStandardMaterial({
+              color: baseColor,
+              roughness: 0.35,
+              metalness: 0.2,
+              side: THREE.DoubleSide
+            });
 
-            drawCtx.moveTo(lastPoint.x, lastPoint.y);
+        group.add(new THREE.Mesh(ribbonGeo, ribbonMat));
 
-            drawCtx.lineTo(
-                smoothPoint.x,
-                smoothPoint.y
-            );
-
-            drawCtx.strokeStyle = brushColor;
-            drawCtx.lineWidth = brushSize;
-
-            drawCtx.lineCap = "round";
-            drawCtx.lineJoin = "round";
-
-            drawCtx.shadowColor = brushColor;
-            drawCtx.shadowBlur = 5;
-
-            drawCtx.stroke();
-
-            drawCtx.shadowBlur = 0;
+        if (options.glow) {
+          const glowRibbonMat = new THREE.MeshBasicMaterial({
+            color: baseColor,
+            transparent: true,
+            opacity: Math.min(0.75, 0.32 * options.glowIntensity),
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            side: THREE.DoubleSide
+          });
+          const glowMesh = new THREE.Mesh(ribbonGeo, glowRibbonMat);
+          glowMesh.scale.set(1.005, 1.005, 1.005);
+          group.add(glowMesh);
         }
+      }
 
-        lastPoint = {
-            x: smoothPoint.x,
-            y: smoothPoint.y
-        };
-
-        statusText.textContent = "● DRAWING";
-
-    } else {
-
-        statusText.textContent = "READY · Touch fingers to draw";
-
+      return group;
     }
 
-    // Draw cursor around index fingertip
-    cursorCtx.beginPath();
+    /**
+     * Stroke Lifecycle Management
+     */
+    function beginStroke(startWorldPos) {
+      const localPt = worldGroup.worldToLocal(startWorldPos.clone());
+      activeStroke = {
+        points: [localPt],
+        options: {
+          color: state.color,
+          size: state.brushSize,
+          style: state.brushStyle,
+          glow: state.glowEnabled,
+          glowIntensity: state.glowIntensity
+        },
+        meshGroup: null
+      };
+      strokesHistory.push(activeStroke);
+    }
 
-    cursorCtx.arc(
-        point.x,
-        point.y,
-        drawing ? 12 : 8,
-        0,
-        Math.PI * 2
-    );
+    function appendStrokePoint(worldPos) {
+      if (!activeStroke) return;
+      const localPt = worldGroup.worldToLocal(worldPos.clone());
+      const lastPt = activeStroke.points[activeStroke.points.length - 1];
 
-    cursorCtx.strokeStyle = drawing ? brushColor : "#ffffff";
-    cursorCtx.lineWidth = 3;
-    cursorCtx.stroke();
+      // Minimum spatial delta (2.5mm) prevents duplicate vertices & jitter knots
+      if (lastPt.distanceTo(localPt) < 0.0025) return;
 
-    cursorCtx.fillStyle = drawing ? brushColor : "#ffffff";
+      activeStroke.points.push(localPt);
 
-    cursorCtx.beginPath();
+      // Rebuild stroke mesh smoothly
+      if (activeStroke.meshGroup) {
+        worldGroup.remove(activeStroke.meshGroup);
+        disposeGroup(activeStroke.meshGroup);
+      }
+      activeStroke.meshGroup = createVolumetricStrokeGroup(activeStroke.points, activeStroke.options);
+      worldGroup.add(activeStroke.meshGroup);
+    }
 
-    cursorCtx.arc(
-        point.x,
-        point.y,
-        3,
-        0,
-        Math.PI * 2
-    );
+    function endStroke() {
+      if (!activeStroke) return;
+      // If user just tapped/pinched once without moving, create a glowing 3D dot
+      if (activeStroke.points.length === 1) {
+        const dotPt = activeStroke.points[0].clone().add(new THREE.Vector3(0.0001, 0.0001, 0.0001));
+        activeStroke.points.push(dotPt);
+        activeStroke.meshGroup = createVolumetricStrokeGroup(activeStroke.points, activeStroke.options);
+        worldGroup.add(activeStroke.meshGroup);
+      }
+      activeStroke = null;
+    }
 
-    cursorCtx.fill();
-}
+    function disposeGroup(group) {
+      group.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+          else child.material.dispose();
+        }
+      });
+    }
 
-</script>
+    function rebuildAllStrokesWithGlow(glowState) {
+      strokesHistory.forEach((stroke) => {
+        stroke.options.glow = glowState;
+        stroke.options.glowIntensity = state.glowIntensity;
+        if (stroke.meshGroup) {
+          worldGroup.remove(stroke.meshGroup);
+          disposeGroup(stroke.meshGroup);
+        }
+        stroke.meshGroup = createVolumetricStrokeGroup(stroke.points, stroke.options);
+        worldGroup.add(stroke.meshGroup);
+      });
+    }
 
+    /**
+     * ============================================================================
+     * 5. PRECISION HAND & PINCH TRACKING (MEDIAPIPE HANDS + EMA SMOOTHING)
+     * ============================================================================
+     */
+    let mpHands = null;
+    let isProcessingHandFrame = false;
+    let smoothedCursorWorld = null;
+    let smoothedHandDepthScale = 0;
+
+    function initMediaPipeHands() {
+      if (typeof window.Hands === 'undefined') {
+        showToast('Hand tracker offline — use Hold to Draw button');
+        return;
+      }
+
+      mpHands = new window.Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+      });
+
+      mpHands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.68,
+        minTrackingConfidence: 0.65
+      });
+
+      mpHands.onResults(onHandResults);
+    }
+
+    function onHandResults(results) {
+      isProcessingHandFrame = false;
+
+      // Clear PIP skeleton canvas
+      handPipCtx.clearRect(0, 0, handPipCanvas.width, handPipCanvas.height);
+
+      const landmarks = results.multiHandLandmarks && results.multiHandLandmarks[0];
+      if (!landmarks) {
+        state.handDetected = false;
+        if (state.isPinching && !state.isTouchDrawing) {
+          state.isPinching = false;
+          endStroke();
+        }
+        updateTrackingHUD();
+        return;
+      }
+
+      state.handDetected = true;
+      state.lastHandSeenTime = performance.now();
+
+      // Landmark 4 = Thumb Tip, Landmark 8 = Index Finger Tip
+      // Landmark 0 = Wrist, Landmark 9 = Middle Finger MCP (for relative hand scale / depth)
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      const wrist = landmarks[0];
+      const middleMcp = landmarks[9];
+
+      // 3D Euclidean distance in normalized landmark space
+      const dx = thumbTip.x - indexTip.x;
+      const dy = thumbTip.y - indexTip.y;
+      const dz = (thumbTip.z - indexTip.z) * 0.65; // Z is slightly noisier in monocular estimation
+      const pinchDist = Math.hypot(dx, dy, dz);
+
+      // Normalize pinch distance by apparent hand size so pinching works accurately near or far!
+      const handSpan = Math.max(0.08, Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y));
+      const normalizedPinch = pinchDist / (handSpan * 2.2);
+
+      // Hysteresis state machine to prevent flickering breaks while drawing
+      if (!state.isPinching && normalizedPinch < state.pinchStartThreshold) {
+        state.isPinching = true;
+      } else if (state.isPinching && normalizedPinch > state.pinchReleaseThreshold) {
+        state.isPinching = false;
+      }
+
+      // Precision Pinch Midpoint (weighted 60% index tip, 40% thumb tip for natural pen-tip feel)
+      const midX = indexTip.x * 0.6 + thumbTip.x * 0.4;
+      const midY = indexTip.y * 0.6 + thumbTip.y * 0.4;
+
+      // Estimate subtle depth modulation from apparent hand span (closer hand = slightly closer cursor)
+      const targetScaleDelta = THREE.MathUtils.clamp((0.22 - handSpan) * 0.75, -0.14, 0.22);
+      smoothedHandDepthScale = smoothedHandDepthScale * 0.85 + targetScaleDelta * 0.15;
+      const effectiveDepth = Math.max(0.18, state.drawDepth + smoothedHandDepthScale);
+
+      // Project normalized screen coordinates (0..1) into 3D Camera Space
+      const ndcX = midX * 2 - 1;
+      const ndcY = -(midY * 2 - 1);
+
+      const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+      const rayVec = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(activeCam);
+      const camPos = new THREE.Vector3();
+      activeCam.getWorldPosition(camPos);
+
+      const dir = rayVec.sub(camPos).normalize();
+      const rawWorldTarget = camPos.clone().addScaledVector(dir, effectiveDepth);
+
+      // Exponential Moving Average (EMA) smoothing filter for jitter-free curves
+      if (!smoothedCursorWorld) {
+        smoothedCursorWorld = rawWorldTarget.clone();
+      } else {
+        // Adaptive smoothing: slightly tighter when pinching slowly, responsive on fast sweeps
+        const distMove = smoothedCursorWorld.distanceTo(rawWorldTarget);
+        const dynamicAlpha = THREE.MathUtils.clamp(
+          state.smoothingFactor + distMove * 1.8,
+          0.14,
+          0.88
+        );
+        smoothedCursorWorld.lerp(rawWorldTarget, dynamicAlpha);
+      }
+
+      // Draw Mini Hand Skeleton PIP Feedback
+      drawHandSkeletonPIP(landmarks, thumbTip, indexTip, state.isPinching);
+      updateTrackingHUD();
+    }
+
+    function drawHandSkeletonPIP(landmarks, thumbTip, indexTip, isPinching) {
+      if (handPipCanvas.classList.contains('hidden')) return;
+      const w = handPipCanvas.width;
+      const h = handPipCanvas.height;
+
+      const connections = [
+        [0, 1], [1, 2], [2, 3], [3, 4],
+        [0, 5], [5, 6], [6, 7], [7, 8],
+        [5, 9], [9, 10], [10, 11], [11, 12],
+        [9, 13], [13, 14], [14, 15], [15, 16],
+        [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]
+      ];
+
+      handPipCtx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
+      handPipCtx.lineWidth = 2;
+      connections.forEach(([a, b]) => {
+        handPipCtx.beginPath();
+        handPipCtx.moveTo(landmarks[a].x * w, landmarks[a].y * h);
+        handPipCtx.lineTo(landmarks[b].x * w, landmarks[b].y * h);
+        handPipCtx.stroke();
+      });
+
+      // Highlight Thumb & Index Tips
+      handPipCtx.fillStyle = isPinching ? '#22d3ee' : '#f8fafc';
+      [thumbTip, indexTip].forEach((pt) => {
+        handPipCtx.beginPath();
+        handPipCtx.arc(pt.x * w, pt.y * h, isPinching ? 6 : 4.5, 0, Math.PI * 2);
+        handPipCtx.fill();
+      });
+    }
+
+    function updateTrackingHUD() {
+      if (state.isPinching || state.isTouchDrawing) {
+        statusDot.className = 'relative w-3 h-3 rounded-full bg-cyan-400 pinch-pulse shrink-0';
+        pinchStatusText.textContent = 'Drawing in 3D Space...';
+        pinchStatusText.className = 'text-xs font-semibold text-cyan-300';
+      } else if (state.handDetected) {
+        statusDot.className = 'relative w-3 h-3 rounded-full bg-emerald-400 shrink-0';
+        pinchStatusText.textContent = 'Hand Locked — Pinch to Draw';
+        pinchStatusText.className = 'text-xs font-medium text-emerald-200';
+      } else {
+        statusDot.className = 'relative w-3 h-3 rounded-full bg-amber-400 shrink-0';
+        pinchStatusText.textContent = 'Show Hand or Hold Draw Button';
+        pinchStatusText.className = 'text-xs font-medium text-slate-200';
+      }
+    }
+
+    /**
+     * ============================================================================
+     * 6. BACK CAMERA + DUAL-MODE SPATIAL TRACKING (WEBXR + SENSOR GYRO AR)
+     * ============================================================================
+     */
+    let deviceOrientationData = { alpha: 0, beta: 90, gamma: 0, hasData: false };
+    let screenOrientationAngle = 0;
+
+    // Pseudo-6DOF subtle parallax walking estimator when WebXR isn't available
+    let sensorPosition = new THREE.Vector3(0, 0, 0);
+    let sensorVelocity = new THREE.Vector3(0, 0, 0);
+
+    function setupDeviceOrientationTracking() {
+      window.addEventListener('orientationchange', () => {
+        screenOrientationAngle = window.orientation || 0;
+      });
+
+      window.addEventListener('deviceorientation', (event) => {
+        if (event.alpha !== null && event.beta !== null && event.gamma !== null) {
+          deviceOrientationData.alpha = event.alpha;
+          deviceOrientationData.beta = event.beta;
+          deviceOrientationData.gamma = event.gamma;
+          deviceOrientationData.hasData = true;
+        }
+      });
+
+      // Linear acceleration integration with heavy damping for subtle step parallax
+      window.addEventListener('devicemotion', (event) => {
+        if (state.arMode !== 'sensor') return;
+        const acc = event.acceleration;
+        if (!acc || acc.x === null) return;
+        const dt = Math.min(0.05, (event.interval || 16) / 1000);
+
+        // Apply deadzone to ignore sensor noise
+        const ax = Math.abs(acc.x) > 0.18 ? acc.x : 0;
+        const ay = Math.abs(acc.y) > 0.18 ? acc.y : 0;
+        const az = Math.abs(acc.z) > 0.18 ? acc.z : 0;
+
+        const localAccel = new THREE.Vector3(ax, ay, az).applyQuaternion(camera.quaternion);
+        sensorVelocity.addScaledVector(localAccel, dt * 0.45);
+        sensorVelocity.multiplyScalar(0.86); // Strong damping to prevent drift
+        sensorPosition.addScaledVector(sensorVelocity, dt);
+        sensorPosition.clampLength(0, 1.8);
+      });
+    }
+
+    const _zee = new THREE.Vector3(0, 0, 1);
+    const _euler = new THREE.Euler();
+    const _q0 = new THREE.Quaternion();
+    const _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+
+    function updateSensorCameraPose() {
+      if (!deviceOrientationData.hasData) return;
+
+      const alpha = THREE.MathUtils.degToRad(deviceOrientationData.alpha) + state.worldYawOffset;
+      const beta = THREE.MathUtils.degToRad(deviceOrientationData.beta);
+      const gamma = THREE.MathUtils.degToRad(deviceOrientationData.gamma);
+      const orient = THREE.MathUtils.degToRad(screenOrientationAngle);
+
+      _euler.set(beta, alpha, -gamma, 'YXZ');
+      camera.quaternion.setFromEuler(_euler);
+      camera.quaternion.multiply(_q1);
+      camera.quaternion.multiply(_q0.setFromAxisAngle(_zee, -orient));
+      camera.position.lerp(sensorPosition, 0.25);
+    }
+
+    async function startBackCameraStream() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        return true;
+      } catch (err) {
+        console.warn('Back camera getUserMedia error:', err);
+        showToast('Camera permission needed for hand tracking');
+        return false;
+      }
+    }
+
+    // Check WebXR Support on Load
+    let webXRSupported = false;
+    (async function checkARCapabilities() {
+      if ('xr' in navigator) {
+        try {
+          webXRSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        } catch (e) {
+          webXRSupported = false;
+        }
+      }
+
+      if (webXRSupported) {
+        capabilityBadge.innerHTML = '<span class="text-emerald-300 font-semibold">✓ Full 6DOF WebXR World Tracking Ready</span> — Walk freely around 3D strokes';
+        btnLaunchSensorAR.classList.remove('hidden');
+      } else {
+        capabilityBadge.innerHTML = '<span class="text-cyan-300 font-semibold">✓ Back-Camera + Gyroscope AR Mode Ready</span>';
+      }
+    })();
+
+    /**
+     * Launch Primary WebXR Session (with DOM Overlay & Optional Camera Access)
+     */
+    async function launchWebXR() {
+      try {
+        initMediaPipeHands();
+        // Start background camera feed for MediaPipe hand landmark detection
+        await startBackCameraStream();
+
+        const session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['local'],
+          optionalFeatures: ['dom-overlay', 'hit-test'],
+          domOverlay: { root: document.getElementById('ar-overlay') }
+        });
+
+        renderer.xr.setReferenceSpaceType('local');
+        await renderer.xr.setSession(session);
+
+        // Hide HTML video element because WebXR composites the live back camera natively
+        videoEl.style.opacity = '0';
+
+        state.arMode = 'webxr';
+        state.isRunning = true;
+        trackingModeLabel.textContent = 'WebXR 6DOF AR';
+        startScreen.classList.add('hidden');
+        showToast('Walk around freely! Pinch index & thumb to draw.');
+
+        session.addEventListener('end', () => {
+          state.isRunning = false;
+          videoEl.style.opacity = '1';
+          startScreen.classList.remove('hidden');
+        });
+
+        renderer.setAnimationLoop(renderFrame);
+      } catch (err) {
+        console.warn('WebXR launch fallback to Sensor AR:', err);
+        launchSensorAR();
+      }
+    }
+
+    /**
+     * Launch Fallback Back-Camera + Gyroscope AR Mode (iOS Safari / Non-WebXR Browsers)
+     */
+    async function launchSensorAR() {
+      initMediaPipeHands();
+
+      // Request iOS 13+ Motion & Orientation permissions if required
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          await DeviceOrientationEvent.requestPermission();
+        } catch (e) {
+          console.warn('Orientation permission declined:', e);
+        }
+      }
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        try {
+          await DeviceMotionEvent.requestPermission();
+        } catch (e) {
+          console.warn('Motion permission declined:', e);
+        }
+      }
+
+      setupDeviceOrientationTracking();
+      const camOk = await startBackCameraStream();
+      if (!camOk) return;
+
+      videoEl.style.opacity = '1';
+      state.arMode = 'sensor';
+      state.isRunning = true;
+      trackingModeLabel.textContent = 'Camera + Spatial Gyro';
+      startScreen.classList.add('hidden');
+      showToast('Pinch Index + Thumb or Hold Draw Button!');
+
+      renderer.setAnimationLoop(renderFrame);
+    }
+
+    /**
+     * ============================================================================
+     * 7. MAIN 60FPS RENDER & INTERACTION LOOP
+     * ============================================================================
+     */
+    let wasDrawingLastFrame = false;
+
+    function renderFrame(timestamp) {
+      if (!state.isRunning) return;
+
+      // 1. Update Camera Pose in Sensor Mode
+      if (state.arMode === 'sensor') {
+        updateSensorCameraPose();
+      }
+
+      // 2. Feed Back-Camera Frame to MediaPipe Hands asynchronously
+      if (mpHands && !isProcessingHandFrame && videoEl.readyState >= 2) {
+        isProcessingHandFrame = true;
+        mpHands.send({ image: videoEl }).catch(() => {
+          isProcessingHandFrame = false;
+        });
+      }
+
+      // 3. Determine Active 3D Cursor Position (Hand Pinch vs. Manual Hold-to-Draw Reticle)
+      const activeCam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+      let cursorWorldPos = null;
+      const handRecentlySeen = state.handDetected && (performance.now() - state.lastHandSeenTime < 450);
+
+      if (handRecentlySeen && smoothedCursorWorld && !state.isTouchDrawing) {
+        cursorWorldPos = smoothedCursorWorld;
+      } else {
+        // Center-screen reticle projection for "Hold to Draw" or aiming
+        const camPos = new THREE.Vector3();
+        const camDir = new THREE.Vector3();
+        activeCam.getWorldPosition(camPos);
+        activeCam.getWorldDirection(camDir);
+        cursorWorldPos = camPos.addScaledVector(camDir, state.drawDepth);
+      }
+
+      // 4. Update 3D Air-Cursor Visuals
+      if (cursorWorldPos) {
+        cursorGroup.visible = true;
+        cursorGroup.position.copy(cursorWorldPos);
+        cursorGroup.quaternion.copy(activeCam.quaternion);
+
+        const isDrawingNow = (handRecentlySeen && state.isPinching) || state.isTouchDrawing;
+        cursorCoreMat.color.set(state.color);
+
+        const targetScale = isDrawingNow ? (state.brushSize / 0.008) : 1.0;
+        cursorCore.scale.setScalar(THREE.MathUtils.clamp(targetScale, 0.65, 2.4));
+        cursorHalo.scale.setScalar(isDrawingNow ? 0.72 : 1.15);
+        cursorHaloMat.opacity = isDrawingNow ? 0.95 : 0.55;
+
+        // 5. Handle Stroke State Transitions (Begin / Append / End)
+        if (isDrawingNow && !wasDrawingLastFrame) {
+          beginStroke(cursorWorldPos);
+        } else if (isDrawingNow && wasDrawingLastFrame) {
+          appendStrokePoint(cursorWorldPos);
+        } else if (!isDrawingNow && wasDrawingLastFrame) {
+          endStroke();
+        }
+        wasDrawingLastFrame = isDrawingNow;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    /**
+     * ============================================================================
+     * 8. UI EVENT LISTENERS & INTERACTIVE CONTROLS
+     * ============================================================================
+     */
+    btnLaunchAR.addEventListener('click', () => {
+      if (webXRSupported) {
+        launchWebXR();
+      } else {
+        launchSensorAR();
+      }
+    });
+
+    btnLaunchSensorAR.addEventListener('click', launchSensorAR);
+
+    // Color Swatches
+    const swatchBtns = document.querySelectorAll('.swatch-btn');
+    const customColorPicker = document.getElementById('custom-color-picker');
+
+    function selectColor(hex) {
+      state.color = hex;
+      swatchBtns.forEach((btn) => {
+        btn.classList.toggle('swatch-active', btn.dataset.color.toLowerCase() === hex.toLowerCase());
+      });
+    }
+
+    swatchBtns.forEach((btn) => {
+      btn.addEventListener('click', () => selectColor(btn.dataset.color));
+    });
+
+    customColorPicker.addEventListener('input', (e) => {
+      state.color = e.target.value;
+      swatchBtns.forEach((btn) => btn.classList.remove('swatch-active'));
+    });
+
+    // Brush Style Buttons
+    const brushBtns = document.querySelectorAll('.brush-btn');
+    brushBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.brushStyle = btn.dataset.brush;
+        brushBtns.forEach((b) => {
+          const active = b === btn;
+          b.className = active
+            ? 'brush-btn bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition'
+            : 'brush-btn text-slate-300 hover:bg-white/10 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition';
+        });
+      });
+    });
+
+    // Brush Size Slider
+    const sliderBrushSize = document.getElementById('slider-brush-size');
+    const brushSizeLabel = document.getElementById('brush-size-label');
+    sliderBrushSize.addEventListener('input', (e) => {
+      state.brushSize = parseFloat(e.target.value);
+      brushSizeLabel.textContent = `${Math.round(state.brushSize * 1000)}mm`;
+    });
+
+    // Neon Glow Mode Toggle
+    const btnGlowToggle = document.getElementById('btn-glow-toggle');
+    const glowBtnLabel = document.getElementById('glow-btn-label');
+    btnGlowToggle.addEventListener('click', () => {
+      state.glowEnabled = !state.glowEnabled;
+      glowBtnLabel.textContent = state.glowEnabled ? 'Glow: ON' : 'Glow: OFF';
+
+      if (state.glowEnabled) {
+        btnGlowToggle.className = 'interactive glass-pill px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border-amber-300/50 bg-amber-400/20 text-amber-200 shadow-[0_0_20px_rgba(251,191,36,0.3)] active:scale-95 transition';
+      } else {
+        btnGlowToggle.className = 'interactive glass-pill px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-1.5 border-white/15 text-slate-300 active:scale-95 transition';
+      }
+
+      rebuildAllStrokesWithGlow(state.glowEnabled);
+      showToast(state.glowEnabled ? 'Neon Glow Enabled' : 'Solid Matte 3D Ink');
+    });
+
+    // Hold-to-Draw Fallback Touch Button
+    const btnHoldDraw = document.getElementById('btn-hold-draw');
+    const startTouchDraw = (e) => {
+      e.preventDefault();
+      state.isTouchDrawing = true;
+      updateTrackingHUD();
+    };
+    const stopTouchDraw = (e) => {
+      if (e) e.preventDefault();
+      state.isTouchDrawing = false;
+      updateTrackingHUD();
+    };
+
+    btnHoldDraw.addEventListener('pointerdown', startTouchDraw);
+    btnHoldDraw.addEventListener('pointerup', stopTouchDraw);
+    btnHoldDraw.addEventListener('pointercancel', stopTouchDraw);
+    btnHoldDraw.addEventListener('pointerleave', stopTouchDraw);
+
+    // Undo Last Stroke
+    document.getElementById('btn-undo').addEventListener('click', () => {
+      if (strokesHistory.length === 0) {
+        showToast('Nothing to undo');
+        return;
+      }
+      const last = strokesHistory.pop();
+      if (last && last.meshGroup) {
+        worldGroup.remove(last.meshGroup);
+        disposeGroup(last.meshGroup);
+      }
+      showToast('Undid last 3D stroke');
+    });
+
+    // Double-Tap Safe Clear All
+    const btnClear = document.getElementById('btn-clear');
+    const clearBtnLabel = document.getElementById('clear-btn-label');
+    btnClear.addEventListener('click', () => {
+      if (strokesHistory.length === 0) return;
+
+      if (!state.clearConfirmPending) {
+        state.clearConfirmPending = true;
+        clearBtnLabel.textContent = 'Confirm?';
+        showToast('Tap Clear again to erase all 3D art');
+        clearTimeout(state.clearConfirmTimer);
+        state.clearConfirmTimer = setTimeout(() => {
+          state.clearConfirmPending = false;
+          clearBtnLabel.textContent = 'Clear';
+        }, 2800);
+        return;
+      }
+
+      // Confirmed clear
+      clearTimeout(state.clearConfirmTimer);
+      state.clearConfirmPending = false;
+      clearBtnLabel.textContent = 'Clear';
+
+      while (strokesHistory.length > 0) {
+        const item = strokesHistory.pop();
+        if (item && item.meshGroup) {
+          worldGroup.remove(item.meshGroup);
+          disposeGroup(item.meshGroup);
+        }
+      }
+      showToast('3D Air Canvas Cleared');
+    });
+
+    // Settings Drawer & Sliders
+    document.getElementById('btn-toggle-settings').addEventListener('click', () => {
+      settingsDrawer.classList.toggle('hidden');
+    });
+
+    const sliderDepth = document.getElementById('slider-depth');
+    const depthValueLabel = document.getElementById('depth-value-label');
+    sliderDepth.addEventListener('input', (e) => {
+      state.drawDepth = parseFloat(e.target.value);
+      depthValueLabel.textContent = `${state.drawDepth.toFixed(2)} m`;
+    });
+
+    const sliderSmooth = document.getElementById('slider-smooth');
+    const smoothValueLabel = document.getElementById('smooth-value-label');
+    sliderSmooth.addEventListener('input', (e) => {
+      state.smoothingFactor = parseFloat(e.target.value);
+      const desc = state.smoothingFactor < 0.28 ? 'Ultra' : state.smoothingFactor < 0.5 ? 'High' : 'Fast';
+      smoothValueLabel.textContent = `${desc} (${state.smoothingFactor.toFixed(2)})`;
+    });
+
+    const sliderGlowIntensity = document.getElementById('slider-glow-intensity');
+    const glowIntensityLabel = document.getElementById('glow-intensity-label');
+    sliderGlowIntensity.addEventListener('input', (e) => {
+      state.glowIntensity = parseFloat(e.target.value);
+      glowIntensityLabel.textContent = `${Math.round(state.glowIntensity * 100)}%`;
+      if (state.glowEnabled) {
+        rebuildAllStrokesWithGlow(true);
+      }
+    });
+
+    // Re-Anchor World Space
+    document.getElementById('btn-recenter-world').addEventListener('click', () => {
+      sensorPosition.set(0, 0, 0);
+      sensorVelocity.set(0, 0, 0);
+      showToast('3D Spatial Anchor Re-Centered');
+    });
+
+    // Toggle Mini Hand Skeleton PIP
+    document.getElementById('btn-toggle-pip').addEventListener('click', () => {
+      handPipCanvas.classList.toggle('hidden');
+    });
+
+    // Clean View / Hide HUD for Screenshots
+    document.getElementById('btn-hide-ui').addEventListener('click', () => {
+      topHud.classList.add('hud-hidden');
+      bottomHud.classList.add('hud-hidden');
+      settingsDrawer.classList.add('hidden');
+      btnShowUi.classList.remove('hidden');
+    });
+
+    btnShowUi.addEventListener('click', () => {
+      topHud.classList.remove('hud-hidden');
+      bottomHud.classList.remove('hud-hidden');
+      btnShowUi.classList.add('hidden');
+    });
+  </script>
 </body>
 </html>
