@@ -4,7 +4,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>AR Ruler</title>
+<title>Air Draw AR</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 
 <style>
 * {
@@ -13,446 +15,503 @@
 
 body {
     margin: 0;
-    background: #080d14;
+    background: #05090e;
     color: white;
     font-family: Arial, sans-serif;
-    text-align: center;
-}
-
-header {
-    padding: 20px 10px;
-}
-
-h2 {
-    margin: 0;
-    font-size: 25px;
-}
-
-.subtitle {
-    color: #8493a8;
-    font-size: 13px;
-    margin-top: 8px;
+    overflow: hidden;
 }
 
 #camera {
     position: relative;
     width: 100%;
-    background: #111923;
+    height: 100dvh;
+    background: #080d14;
     overflow: hidden;
-    line-height: 0;
 }
 
-video {
-    display: block;
+#video {
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: contain;
+    transform: scaleX(-1);
 }
 
-canvas {
+#drawCanvas, #cursorCanvas {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    touch-action: none;
+    transform: scaleX(-1);
+    pointer-events: none;
+}
+
+#cursorCanvas {
+    z-index: 2;
+}
+
+.top {
+    position: absolute;
+    top: 20px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    z-index: 5;
+    pointer-events: none;
+}
+
+.top h2 {
+    margin: 0;
+    font-size: 24px;
+    text-shadow: 0 2px 10px black;
 }
 
 #status {
-    padding: 15px;
-    color: #a5b5c9;
+    display: inline-block;
+    margin-top: 10px;
+    background: #101c2bcc;
+    border: 1px solid #34445b;
+    border-radius: 30px;
+    padding: 10px 16px;
     font-size: 13px;
 }
 
-.measurement {
-    padding: 20px;
+#controls {
+    position: absolute;
+    bottom: 20px;
+    left: 10px;
+    right: 10px;
+    z-index: 5;
+    padding: 15px;
+    background: #0b1422eF;
+    border: 1px solid #28374c;
+    border-radius: 20px;
 }
 
-#result {
-    font-size: 42px;
-    font-weight: bold;
-    color: #00e6a0;
-}
-
-#inches {
-    color: #91a1b6;
-    font-size: 16px;
-    margin-top: 5px;
-}
-
-.controls {
-    padding: 12px;
+.colors {
     display: flex;
-    flex-wrap: wrap;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.color {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    padding: 0;
+}
+
+.color.active {
+    border-color: white;
+    transform: scale(1.15);
+}
+
+.buttons {
+    display: flex;
     justify-content: center;
     gap: 10px;
 }
 
 button {
+    background: #1e3046;
     border: 0;
-    padding: 14px 18px;
-    border-radius: 12px;
-    background: #2878f0;
     color: white;
-    font-size: 14px;
+    padding: 13px 18px;
+    border-radius: 12px;
     font-weight: bold;
 }
 
-.secondary {
-    background: #202d3e;
+#clear {
+    background: #c03949;
 }
 
-.green {
-    background: #008e69;
+#start {
+    background: #087eeb;
 }
 
-input {
-    width: 110px;
+#brush {
+    width: 100%;
+    margin-top: 12px;
+    accent-color: #00e6a0;
+}
+
+#instructions {
+    position: absolute;
+    top: 125px;
+    left: 15px;
+    z-index: 4;
+    background: #101c2bcc;
+    border-radius: 12px;
     padding: 12px;
-    border: 1px solid #34465c;
-    background: #172333;
-    color: white;
-    border-radius: 10px;
-    font-size: 16px;
-    text-align: center;
-}
-
-.panel {
-    margin: 15px;
-    padding: 18px;
-    background: #111c2a;
-    border-radius: 15px;
-}
-
-.panel p {
-    color: #9aabc0;
-    font-size: 13px;
-    line-height: 1.5;
-}
-
-footer {
-    padding: 20px;
-    color: #64748b;
     font-size: 12px;
+    line-height: 1.7;
+    pointer-events: none;
 }
+
 </style>
 </head>
 
 <body>
 
-<header>
-    <h2>AR Ruler</h2>
-    <div class="subtitle">Measure real-world objects with your camera</div>
-</header>
-
 <div id="camera">
+
     <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
-</div>
 
-<div id="status">Start your camera to begin.</div>
+    <canvas id="drawCanvas"></canvas>
+    <canvas id="cursorCanvas"></canvas>
 
-<div class="measurement">
-    <div id="result">0.0 cm</div>
-    <div id="inches">0.00 inches</div>
-</div>
+    <div class="top">
+        <h2>Air Draw AR</h2>
+        <div id="status">Press Start Camera</div>
+    </div>
 
-<div class="panel">
-    <b>1. Calibrate your ruler</b>
-    <p>
-        Find an object with a known length. Enter its length,
-        press Calibrate, then tap its two endpoints on the camera.
-    </p>
+    <div id="instructions">
+        ☝️ + 👍 Touch fingers = Draw<br>
+        Separate fingers = Stop drawing<br>
+        Move your hand to draw
+    </div>
 
-    <input id="knownLength" type="number"
-        placeholder="Length" value="10" min="0.1" step="any">
+    <div id="controls">
 
-    <button class="green" onclick="setMode('calibrate')">
-        Calibrate
-    </button>
+        <div class="colors">
+            <button class="color active" style="background:#00e6a0"
+                data-color="#00e6a0"></button>
 
-    <p id="calibrationStatus">Not calibrated</p>
-</div>
+            <button class="color" style="background:#ffffff"
+                data-color="#ffffff"></button>
 
-<div class="panel">
-    <b>2. Measure distance</b>
-    <p>
-        After calibration, press Measure and tap two points
-        on the same surface and at approximately the same depth
-        as your calibration object.
-    </p>
+            <button class="color" style="background:#ff3158"
+                data-color="#ff3158"></button>
 
-    <div class="controls">
-        <button onclick="setMode('measure')">Measure</button>
-        <button class="secondary" onclick="clearPoints()">Clear</button>
-        <button class="secondary" onclick="switchCamera()">Switch Camera</button>
+            <button class="color" style="background:#4287ff"
+                data-color="#4287ff"></button>
+
+            <button class="color" style="background:#ffcb45"
+                data-color="#ffcb45"></button>
+
+            <button class="color" style="background:#bd70ff"
+                data-color="#bd70ff"></button>
+        </div>
+
+        <div class="buttons">
+            <button id="start" onclick="startCamera()">
+                Start Camera
+            </button>
+
+            <button id="clear" onclick="clearDrawing()">
+                Clear Drawing
+            </button>
+        </div>
+
+        <input id="brush" type="range"
+            min="2" max="25" value="6">
+
     </div>
 </div>
 
-<div class="controls">
-    <button onclick="startCamera()">Start Camera</button>
-    <button class="secondary" onclick="stopCamera()">Stop Camera</button>
-</div>
-
-<footer>
-    AR Ruler · Camera-based measurement
-</footer>
-
 <script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
 
-const status = document.getElementById("status");
-const result = document.getElementById("result");
-const inches = document.getElementById("inches");
+const video = document.getElementById("video");
+
+const drawCanvas = document.getElementById("drawCanvas");
+const cursorCanvas = document.getElementById("cursorCanvas");
+
+const drawCtx = drawCanvas.getContext("2d");
+const cursorCtx = cursorCanvas.getContext("2d");
+
+const statusText = document.getElementById("status");
 
 let stream = null;
-let facing = "environment";
+let hands = null;
+let running = false;
+let processing = false;
 
-let mode = "measure";
-let calibration = null;
-let calibrationPixels = [];
-let measurePoints = [];
+let drawing = false;
+let lastPoint = null;
+let smoothPoint = null;
+
+let brushColor = "#00e6a0";
+let brushSize = 6;
+
+let lastHandSeen = 0;
 
 function resizeCanvas() {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    draw();
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+
+    drawCanvas.width = width;
+    drawCanvas.height = height;
+
+    cursorCanvas.width = width;
+    cursorCanvas.height = height;
+
+    drawCtx.lineCap = "round";
+    drawCtx.lineJoin = "round";
 }
 
+function clearDrawing() {
+    drawCtx.clearRect(
+        0, 0, drawCanvas.width, drawCanvas.height
+    );
+}
+
+document.querySelectorAll(".color").forEach(button => {
+    button.addEventListener("click", () => {
+
+        brushColor = button.dataset.color;
+
+        document.querySelectorAll(".color").forEach(b => {
+            b.classList.remove("active");
+        });
+
+        button.classList.add("active");
+    });
+});
+
+document.getElementById("brush").addEventListener("input", e => {
+    brushSize = Number(e.target.value);
+});
+
 async function startCamera() {
+
     stopCamera();
 
+    statusText.textContent = "Starting camera...";
+
     try {
+
         stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
-                facingMode: facing,
+                facingMode: "user",
                 width: { ideal: 1280 },
-                height: { ideal: 720 }
+                height: { ideal: 720 },
+                frameRate: { ideal: 30, max: 30 }
             }
         });
 
         video.srcObject = stream;
+
         await video.play();
 
         resizeCanvas();
 
-        status.textContent = "Camera ready. Calibrate to begin.";
+        if (!hands) {
+
+            statusText.textContent = "Loading hand tracking...";
+
+            hands = new Hands({
+                locateFile: file =>
+                    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 0,
+                minDetectionConfidence: 0.65,
+                minTrackingConfidence: 0.65
+            });
+
+            hands.onResults(onResults);
+        }
+
+        running = true;
+
+        statusText.textContent = "Show your hand to the camera";
+
+        processFrame();
 
     } catch (error) {
-        status.textContent = "Camera unavailable. Check permissions.";
+
         console.error(error);
+
+        statusText.textContent =
+            "Camera error. Allow camera access and reload.";
+
     }
 }
 
 function stopCamera() {
+
+    running = false;
+    drawing = false;
+    lastPoint = null;
+    smoothPoint = null;
+
     if (stream) {
         stream.getTracks().forEach(track => track.stop());
         stream = null;
     }
 
     video.srcObject = null;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-}
 
-async function switchCamera() {
-    facing = facing === "environment" ? "user" : "environment";
-
-    if (stream) {
-        await startCamera();
-    }
-}
-
-function setMode(newMode) {
-    if (!stream) {
-        status.textContent = "Start the camera first.";
-        return;
-    }
-
-    if (newMode === "measure" && !calibration) {
-        status.textContent = "Calibrate first using a known object.";
-        return;
-    }
-
-    mode = newMode;
-
-    if (mode === "calibrate") {
-        calibrationPixels = [];
-
-        const length = Number(
-            document.getElementById("knownLength").value
-        );
-
-        if (!Number.isFinite(length) || length <= 0) {
-            status.textContent = "Enter a valid calibration length.";
-            return;
-        }
-
-        calibration = { length };
-
-        status.textContent = "Tap the FIRST calibration point.";
-    } else {
-        measurePoints = [];
-        status.textContent = "Tap the FIRST measurement point.";
-    }
-
-    draw();
-}
-
-function distance(a, b) {
-    return Math.hypot(
-        b.x - a.x,
-        b.y - a.y
+    cursorCtx.clearRect(
+        0, 0, cursorCanvas.width, cursorCanvas.height
     );
 }
 
-canvas.addEventListener("pointerdown", function(event) {
-    if (!stream) return;
+async function processFrame() {
 
-    const rect = canvas.getBoundingClientRect();
+    if (!running || processing) return;
+
+    processing = true;
+
+    try {
+        if (video.readyState >= 2) {
+            await hands.send({ image: video });
+        }
+    } catch (error) {
+        console.error(error);
+    }
+
+    processing = false;
+
+    if (running) {
+        requestAnimationFrame(processFrame);
+    }
+}
+
+function onResults(results) {
+
+    cursorCtx.clearRect(
+        0, 0, cursorCanvas.width, cursorCanvas.height
+    );
+
+    if (!results.multiHandLandmarks ||
+        results.multiHandLandmarks.length === 0) {
+
+        drawing = false;
+        lastPoint = null;
+        smoothPoint = null;
+
+        statusText.textContent = "Show your hand to the camera";
+        return;
+    }
+
+    lastHandSeen = performance.now();
+
+    const landmarks = results.multiHandLandmarks[0];
+
+    // Index fingertip = landmark 8
+    // Thumb fingertip = landmark 4
+
+    const index = landmarks[8];
+    const thumb = landmarks[4];
+
+    const width = drawCanvas.width;
+    const height = drawCanvas.height;
 
     const point = {
-        x: (event.clientX - rect.left) *
-            canvas.width / rect.width,
-
-        y: (event.clientY - rect.top) *
-            canvas.height / rect.height
+        x: index.x * width,
+        y: index.y * height
     };
 
-    if (mode === "calibrate") {
-        calibrationPixels.push(point);
+    // Calculate thumb-to-index distance
+    const dx = (index.x - thumb.x) * width;
+    const dy = (index.y - thumb.y) * height;
 
-        if (calibrationPixels.length === 1) {
-            status.textContent = "Now tap the SECOND calibration point.";
+    const pinchDistance =
+        Math.hypot(dx, dy) / Math.min(width, height);
+
+    // Draw using pinch detection with hysteresis
+    if (!drawing && pinchDistance < 0.045) {
+
+        drawing = true;
+        lastPoint = null;
+        smoothPoint = point;
+
+    } else if (drawing && pinchDistance > 0.065) {
+
+        drawing = false;
+        lastPoint = null;
+        smoothPoint = null;
+
+    }
+
+    // Smooth hand movement
+    if (drawing) {
+
+        if (!smoothPoint) {
+            smoothPoint = point;
+        } else {
+
+            const smoothing = 0.55;
+
+            smoothPoint.x +=
+                (point.x - smoothPoint.x) * smoothing;
+
+            smoothPoint.y +=
+                (point.y - smoothPoint.y) * smoothing;
         }
 
-        if (calibrationPixels.length === 2) {
-            const pixels = distance(
-                calibrationPixels[0],
-                calibrationPixels[1]
+        if (lastPoint) {
+
+            drawCtx.beginPath();
+
+            drawCtx.moveTo(lastPoint.x, lastPoint.y);
+
+            drawCtx.lineTo(
+                smoothPoint.x,
+                smoothPoint.y
             );
 
-            if (pixels < 5) {
-                calibrationPixels = [];
-                status.textContent = "Points too close. Try again.";
-                draw();
-                return;
-            }
+            drawCtx.strokeStyle = brushColor;
+            drawCtx.lineWidth = brushSize;
 
-            calibration.pixels = pixels;
+            drawCtx.lineCap = "round";
+            drawCtx.lineJoin = "round";
 
-            calibration.cmPerPixel =
-                calibration.length / pixels;
+            drawCtx.shadowColor = brushColor;
+            drawCtx.shadowBlur = 5;
 
-            document.getElementById("calibrationStatus").textContent =
-                "Calibrated: " +
-                calibration.length + " cm reference";
+            drawCtx.stroke();
 
-            status.textContent =
-                "Calibration complete! Press Measure.";
-
-            mode = "measure";
-            measurePoints = [];
+            drawCtx.shadowBlur = 0;
         }
+
+        lastPoint = {
+            x: smoothPoint.x,
+            y: smoothPoint.y
+        };
+
+        statusText.textContent = "● DRAWING";
+
+    } else {
+
+        statusText.textContent = "READY · Touch fingers to draw";
+
     }
 
-    else if (mode === "measure") {
-        measurePoints.push(point);
+    // Draw cursor around index fingertip
+    cursorCtx.beginPath();
 
-        if (measurePoints.length === 1) {
-            status.textContent = "Now tap the SECOND point.";
-        }
-
-        if (measurePoints.length === 2) {
-            calculateMeasurement();
-        }
-    }
-
-    draw();
-});
-
-function calculateMeasurement() {
-    if (!calibration || measurePoints.length !== 2) return;
-
-    const pixels = distance(
-        measurePoints[0],
-        measurePoints[1]
+    cursorCtx.arc(
+        point.x,
+        point.y,
+        drawing ? 12 : 8,
+        0,
+        Math.PI * 2
     );
 
-    const cm = pixels * calibration.cmPerPixel;
-    const inch = cm / 2.54;
+    cursorCtx.strokeStyle = drawing ? brushColor : "#ffffff";
+    cursorCtx.lineWidth = 3;
+    cursorCtx.stroke();
 
-    result.textContent = cm.toFixed(2) + " cm";
-    inches.textContent = inch.toFixed(2) + " inches";
+    cursorCtx.fillStyle = drawing ? brushColor : "#ffffff";
 
-    status.textContent = "Measurement complete.";
+    cursorCtx.beginPath();
 
-    mode = "measure";
+    cursorCtx.arc(
+        point.x,
+        point.y,
+        3,
+        0,
+        Math.PI * 2
+    );
+
+    cursorCtx.fill();
 }
-
-function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    function drawLine(points, color) {
-        if (!points.length) return;
-
-        ctx.fillStyle = color;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 5;
-
-        points.forEach(point => {
-            ctx.beginPath();
-            ctx.arc(point.x, point.y, 9, 0, Math.PI * 2);
-            ctx.fill();
-        });
-
-        if (points.length === 2) {
-            ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            ctx.lineTo(points[1].x, points[1].y);
-            ctx.stroke();
-
-            const midX = (points[0].x + points[1].x) / 2;
-            const midY = (points[0].y + points[1].y) / 2;
-
-            ctx.fillStyle = "#00e6a0";
-            ctx.font = "bold 28px Arial";
-            ctx.textAlign = "center";
-
-            if (color === "#00e6a0" && calibration) {
-                const cm = distance(points[0], points[1]) *
-                    calibration.cmPerPixel;
-
-                ctx.fillText(
-                    cm.toFixed(1) + " cm",
-                    midX,
-                    midY - 20
-                );
-            }
-        }
-    }
-
-    drawLine(calibrationPixels, "#ffb547");
-    drawLine(measurePoints, "#00e6a0");
-}
-
-function clearPoints() {
-    calibrationPixels = [];
-    measurePoints = [];
-
-    result.textContent = "0.0 cm";
-    inches.textContent = "0.00 inches";
-
-    draw();
-
-    status.textContent = calibration
-        ? "Ready for another measurement."
-        : "Calibrate first.";
-}
-
-window.addEventListener("resize", () => {
-    if (video.videoWidth) resizeCanvas();
-});
 
 </script>
 
