@@ -66,6 +66,16 @@
       pointer-events: none;
     }
 
+    /* Fullscreen Fingertip & Pinch Tracking Overlay Canvas */
+    #hand-overlay-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      pointer-events: none;
+    }
+
     /* WebXR DOM Overlay Container */
     #ar-overlay {
       position: fixed;
@@ -170,6 +180,9 @@
   <!-- 3D WebGL / WebXR Canvas -->
   <canvas id="ar-canvas"></canvas>
 
+  <!-- Fullscreen Fingertip & Pinch Visual Guide Canvas -->
+  <canvas id="hand-overlay-canvas"></canvas>
+
   <!-- Main WebXR DOM Overlay & Mobile HUD -->
   <div id="ar-overlay">
     <!-- TOP BAR: Status, Hand Tracking PIP & Quick Controls -->
@@ -230,9 +243,9 @@
       <div class="space-y-1">
         <div class="flex justify-between text-xs">
           <span class="text-slate-300">Pinch Sensitivity (Touch Trigger)</span>
-          <span id="pinch-sens-label" class="font-mono text-emerald-300">Balanced (0.42)</span>
+          <span id="pinch-sens-label" class="font-mono text-emerald-300">Easy (0.52)</span>
         </div>
-        <input id="slider-pinch-sens" type="range" min="0.28" max="0.65" step="0.02" value="0.42" class="w-full" />
+        <input id="slider-pinch-sens" type="range" min="0.32" max="0.78" step="0.02" value="0.52" class="w-full" />
       </div>
 
       <!-- Drawing Depth Offset -->
@@ -393,8 +406,8 @@
           Start Back-Camera AR Studio
         </button>
 
-        <button id="btn-launch-sensor-ar" class="hidden w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-cyan-200 bg-white/10 hover:bg-white/15 active:scale-[0.98] transition">
-          Launch in Compatibility Camera + Gyro Mode
+        <button id="btn-launch-webxr" class="hidden w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-cyan-200 bg-white/10 hover:bg-white/15 active:scale-[0.98] transition">
+          Experimental WebXR 6DOF Mode (No Hand Camera on Some Phones)
         </button>
       </div>
     </div>
@@ -426,11 +439,9 @@
       glowEnabled: true,
       glowIntensity: 1.0,
       drawDepth: 0.45,        // meters in front of camera
-      smoothingFactor: 0.45,  // EMA alpha (responsive with zero lag)
-
-      // Tuned Back-Camera Pinch Hysteresis Thresholds (normalized against palm size)
-      pinchStartThreshold: 0.42,
-      pinchReleaseThreshold: 0.56,
+      // Tuned Back-Camera Pinch Hysteresis Thresholds (generous multi-metric ratio)
+      pinchStartThreshold: 0.52,
+      pinchReleaseThreshold: 0.68,
 
       // World Anchor Offset (for re-centering in sensor AR mode)
       worldYawOffset: 0,
@@ -445,10 +456,12 @@
      */
     const videoEl = document.getElementById('camera-feed');
     const canvasEl = document.getElementById('ar-canvas');
+    const handOverlayCanvas = document.getElementById('hand-overlay-canvas');
+    const handOverlayCtx = handOverlayCanvas.getContext('2d');
     const startScreen = document.getElementById('start-screen');
     const capabilityBadge = document.getElementById('capability-badge');
     const btnLaunchAR = document.getElementById('btn-launch-ar');
-    const btnLaunchSensorAR = document.getElementById('btn-launch-sensor-ar');
+    const btnLaunchWebXR = document.getElementById('btn-launch-webxr');
 
     const statusDot = document.getElementById('status-dot');
     const trackingModeLabel = document.getElementById('tracking-mode-label');
@@ -534,11 +547,15 @@
     scene.add(cursorGroup);
 
     // Handle Window Resize
-    window.addEventListener('resize', () => {
+    function resizeCanvases() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+      handOverlayCanvas.width = window.innerWidth;
+      handOverlayCanvas.height = window.innerHeight;
+    }
+    resizeCanvases();
+    window.addEventListener('resize', resizeCanvases);
 
     /**
      * ============================================================================
@@ -988,21 +1005,24 @@
 
     /**
      * ============================================================================
-     * 5. DECOUPLED NON-BLOCKING HAND & PINCH TRACKING (ZERO RENDER STALL)
+     * 5. DECOUPLED NON-BLOCKING HAND & PINCH TRACKING (ASPECT-RATIO PRESERVED)
      * ============================================================================
-     * Runs MediaPipe Lite (`modelComplexity: 0`) on a downscaled 320x240 offscreen
-     * canvas in a decoupled background scheduler so Three.js always runs at 60fps.
+     * Pads the portrait 9:16 mobile video onto an unstretched 320x320 square canvas
+     * so MediaPipe Hands never suffers from portrait squashing, and maps landmarks
+     * back accurately into screen coordinates.
      */
     let mpHands = null;
     let isProcessingHandFrame = false;
     let smoothedCursorWorld = null;
     let smoothedHandDepthScale = 0;
+    let smoothedPinchMetric = 1.0;
 
-    // Downscaled offscreen inference buffer (320x240 = ~12x faster inference than 1280x720!)
+    // Square 320x320 offscreen buffer with letterbox padding metadata (prevents portrait distortion!)
     const inferCanvas = document.createElement('canvas');
     inferCanvas.width = 320;
-    inferCanvas.height = 240;
+    inferCanvas.height = 320;
     const inferCtx = inferCanvas.getContext('2d', { willReadFrequently: false });
+    const inferTransform = { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 };
 
     function initMediaPipeHands() {
       if (typeof window.Hands === 'undefined') {
@@ -1014,16 +1034,13 @@
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
       });
 
-      // CRITICAL FOR BACK CAMERA:
-      // 1. modelComplexity: 0 (Lite neural network -> ~12ms inference instead of 180ms+)
-      // 2. selfieMode: false (back camera sees hand dorsum/palm unmirrored)
-      // 3. Lower confidence thresholds prevent hand loss right when fingers touch/overlap
+      // Tuned for back-camera hands in portrait & landscape orientation
       mpHands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 0,
+        modelComplexity: 1,
         selfieMode: false,
-        minDetectionConfidence: 0.45,
-        minTrackingConfidence: 0.45
+        minDetectionConfidence: 0.35,
+        minTrackingConfidence: 0.35
       });
 
       mpHands.onResults(onHandResults);
@@ -1031,36 +1048,97 @@
     }
 
     /**
-     * Independent Async Hand Inference Scheduler (never blocks Three.js 60fps loop!)
+     * Independent Async Hand Inference Scheduler with Aspect-Ratio Preserving Padding
      */
     function startHandInferenceLoop() {
       const stepInference = async () => {
-        if (state.isRunning && mpHands && !isProcessingHandFrame && videoEl.readyState >= 2) {
+        if (state.isRunning && mpHands && !isProcessingHandFrame && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
           isProcessingHandFrame = true;
           try {
-            // Downscale live video frame onto 320x240 offscreen buffer
-            inferCtx.drawImage(videoEl, 0, 0, inferCanvas.width, inferCanvas.height);
+            const vw = videoEl.videoWidth;
+            const vh = videoEl.videoHeight;
+            const size = 320;
+
+            inferCtx.fillStyle = '#000000';
+            inferCtx.fillRect(0, 0, size, size);
+
+            let drawW = size;
+            let drawH = size;
+            let offX = 0;
+            let offY = 0;
+
+            if (vw > vh) {
+              drawH = Math.round(size * (vh / vw));
+              offY = Math.floor((size - drawH) * 0.5);
+            } else {
+              drawW = Math.round(size * (vw / vh));
+              offX = Math.floor((size - drawW) * 0.5);
+            }
+
+            inferTransform.offsetX = offX / size;
+            inferTransform.offsetY = offY / size;
+            inferTransform.scaleX = drawW / size;
+            inferTransform.scaleY = drawH / size;
+
+            inferCtx.drawImage(videoEl, offX, offY, drawW, drawH);
             await mpHands.send({ image: inferCanvas });
           } catch (e) {
             isProcessingHandFrame = false;
           }
         }
-        // Yield cleanly to browser/GPU between inferences
-        setTimeout(stepInference, 8);
+        setTimeout(stepInference, 10);
       };
       stepInference();
+    }
+
+    /**
+     * Maps padded square MediaPipe landmark (0..1) back to true video normalized coordinates (0..1)
+     * and accounts for CSS `object-fit: cover` crop on screen.
+     */
+    function landmarkToScreenNormalized(lm) {
+      const vidU = THREE.MathUtils.clamp((lm.x - inferTransform.offsetX) / inferTransform.scaleX, 0, 1);
+      const vidV = THREE.MathUtils.clamp((lm.y - inferTransform.offsetY) / inferTransform.scaleY, 0, 1);
+
+      const vw = videoEl.videoWidth || window.innerWidth;
+      const vh = videoEl.videoHeight || window.innerHeight;
+      const sw = window.innerWidth;
+      const sh = window.innerHeight;
+
+      const videoAspect = vw / vh;
+      const screenAspect = sw / sh;
+
+      let screenU = vidU;
+      let screenV = vidV;
+
+      if (videoAspect > screenAspect) {
+        // Video is wider than screen: left/right cropped by object-fit: cover
+        const visibleRatio = screenAspect / videoAspect;
+        const cropOffset = (1 - visibleRatio) * 0.5;
+        screenU = (vidU - cropOffset) / visibleRatio;
+      } else {
+        // Video is taller than screen: top/bottom cropped by object-fit: cover
+        const visibleRatio = videoAspect / screenAspect;
+        const cropOffset = (1 - visibleRatio) * 0.5;
+        screenV = (vidV - cropOffset) / visibleRatio;
+      }
+
+      return {
+        x: THREE.MathUtils.clamp(screenU, 0, 1),
+        y: THREE.MathUtils.clamp(screenV, 0, 1),
+        z: lm.z
+      };
     }
 
     function onHandResults(results) {
       isProcessingHandFrame = false;
 
-      // Clear PIP skeleton canvas
+      // Clear PIP & fullscreen fingertip guide overlays
       handPipCtx.clearRect(0, 0, handPipCanvas.width, handPipCanvas.height);
+      handOverlayCtx.clearRect(0, 0, handOverlayCanvas.width, handOverlayCanvas.height);
 
-      const landmarks = results.multiHandLandmarks && results.multiHandLandmarks[0];
-      if (!landmarks) {
-        // Occlusion grace buffer (3 frames) so momentary finger overlap doesn't drop a stroke!
-        if (state.isPinching && state.occlusionGraceFrames < 3) {
+      const rawLandmarks = results.multiHandLandmarks && results.multiHandLandmarks[0];
+      if (!rawLandmarks) {
+        if (state.isPinching && state.occlusionGraceFrames < 4) {
           state.occlusionGraceFrames++;
           return;
         }
@@ -1074,41 +1152,68 @@
         return;
       }
 
+      // Unpad landmarks into true aspect-accurate screen coordinates
+      const landmarks = rawLandmarks.map(landmarkToScreenNormalized);
+
       state.handDetected = true;
       state.occlusionGraceFrames = 0;
       state.lastHandSeenTime = performance.now();
 
       // Key Landmarks:
-      // 4 = Thumb Tip, 8 = Index Finger Tip
-      // 0 = Wrist, 5 = Index MCP, 9 = Middle MCP, 17 = Pinky MCP
+      // 4 = Thumb Tip, 3 = Thumb IP, 8 = Index Tip, 7 = Index DIP, 6 = Index PIP, 5 = Index MCP
       const thumbTip = landmarks[4];
+      const thumbIp = landmarks[3];
       const indexTip = landmarks[8];
-      const wrist = landmarks[0];
+      const indexDip = landmarks[7];
+      const indexPip = landmarks[6];
       const indexMcp = landmarks[5];
+      const wrist = landmarks[0];
       const middleMcp = landmarks[9];
       const pinkyMcp = landmarks[17];
 
-      // Robust Palm Scale Reference (combines palm length + knuckle width)
-      const palmLength = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y);
-      const palmWidth = Math.hypot(indexMcp.x - pinkyMcp.x, indexMcp.y - pinkyMcp.y);
-      const palmScale = Math.max(0.06, (palmLength + palmWidth) * 0.5);
+      // 1. Hand Bounding Box & Finger Segment Reference Scale (angle-invariant!)
+      let minX = 1, maxX = 0, minY = 1, maxY = 0;
+      for (let i = 0; i < landmarks.length; i++) {
+        if (landmarks[i].x < minX) minX = landmarks[i].x;
+        if (landmarks[i].x > maxX) maxX = landmarks[i].x;
+        if (landmarks[i].y < minY) minY = landmarks[i].y;
+        if (landmarks[i].y > maxY) maxY = landmarks[i].y;
+      }
+      const bboxDiag = Math.hypot((maxX - minX) * window.innerWidth, (maxY - minY) * window.innerHeight);
+      const indexLenPx =
+        Math.hypot((indexMcp.x - indexPip.x) * window.innerWidth, (indexMcp.y - indexPip.y) * window.innerHeight) +
+        Math.hypot((indexPip.x - indexDip.x) * window.innerWidth, (indexPip.y - indexDip.y) * window.innerHeight) +
+        Math.hypot((indexDip.x - indexTip.x) * window.innerWidth, (indexDip.y - indexTip.y) * window.innerHeight);
 
-      // Measure BOTH 2D screen-plane distance AND 3D depth-weighted distance
-      // Why: When thumb & index touch in front of a back camera, Z-depth can jitter slightly
-      // while 2D fingertip centers stay within ~0.25-0.42x palmScale due to finger thickness!
-      const dx = thumbTip.x - indexTip.x;
-      const dy = thumbTip.y - indexTip.y;
-      const dz = (thumbTip.z - indexTip.z) * 0.35;
+      // Reference unit in screen pixels (works whether hand is sideways, palm-out, or back-of-hand)
+      const refScalePx = Math.max(45, Math.max(bboxDiag * 0.42, indexLenPx * 0.95));
 
-      const dist2D = Math.hypot(dx, dy) / palmScale;
-      const dist3D = Math.hypot(dx, dy, dz) / palmScale;
-      const pinchRatio = Math.min(dist2D, dist3D * 1.05);
-      state.livePinchRatio = pinchRatio;
+      // 2. Multi-Point Fingertip Proximity (Tip-to-Tip AND Tip-to-DIP/IP pad contact)
+      const tipToTipPx = Math.hypot(
+        (thumbTip.x - indexTip.x) * window.innerWidth,
+        (thumbTip.y - indexTip.y) * window.innerHeight
+      );
+      const thumbToIndexDipPx = Math.hypot(
+        (thumbTip.x - indexDip.x) * window.innerWidth,
+        (thumbTip.y - indexDip.y) * window.innerHeight
+      );
+      const indexToThumbIpPx = Math.hypot(
+        (indexTip.x - thumbIp.x) * window.innerWidth,
+        (indexTip.y - thumbIp.y) * window.innerHeight
+      );
 
-      // Hysteresis Pinch Trigger (Start < 0.42, Release > 0.56)
-      if (!state.isPinching && pinchRatio < state.pinchStartThreshold) {
+      // Minimum contact distance across fingertip pads
+      const effectiveContactPx = Math.min(tipToTipPx, thumbToIndexDipPx * 1.12, indexToThumbIpPx * 1.12);
+      const rawPinchRatio = effectiveContactPx / refScalePx;
+
+      // Fast low-pass filter on pinch metric to eliminate single-frame jitter
+      smoothedPinchMetric = smoothedPinchMetric * 0.45 + rawPinchRatio * 0.55;
+      state.livePinchRatio = smoothedPinchMetric;
+
+      // Hysteresis Pinch Trigger (Start < 0.52, Release > 0.68)
+      if (!state.isPinching && smoothedPinchMetric < state.pinchStartThreshold) {
         state.isPinching = true;
-      } else if (state.isPinching && pinchRatio > state.pinchReleaseThreshold) {
+      } else if (state.isPinching && smoothedPinchMetric > state.pinchReleaseThreshold) {
         state.isPinching = false;
       }
 
@@ -1116,12 +1221,16 @@
       const midX = (indexTip.x + thumbTip.x) * 0.5;
       const midY = (indexTip.y + thumbTip.y) * 0.5;
 
-      // Subtle depth modulation based on apparent palm scale
+      // Apparent hand size depth modulation
+      const palmLength = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y);
+      const palmWidth = Math.hypot(indexMcp.x - pinkyMcp.x, indexMcp.y - pinkyMcp.y);
+      const palmScale = Math.max(0.06, (palmLength + palmWidth) * 0.5);
+
       const targetScaleDelta = THREE.MathUtils.clamp((0.20 - palmScale) * 0.65, -0.14, 0.22);
       smoothedHandDepthScale = smoothedHandDepthScale * 0.85 + targetScaleDelta * 0.15;
       const effectiveDepth = Math.max(0.18, state.drawDepth + smoothedHandDepthScale);
 
-      // Project normalized screen coordinates (0..1) into 3D Camera Space
+      // Project screen coordinates (0..1) into 3D Camera Space
       const ndcX = midX * 2 - 1;
       const ndcY = -(midY * 2 - 1);
 
@@ -1133,7 +1242,6 @@
       const dir = rayVec.sub(camPos).normalize();
       const rawWorldTarget = camPos.clone().addScaledVector(dir, effectiveDepth);
 
-      // Responsive Exponential Moving Average (EMA) smoothing
       if (!smoothedCursorWorld) {
         smoothedCursorWorld = rawWorldTarget.clone();
       } else {
@@ -1146,9 +1254,41 @@
         smoothedCursorWorld.lerp(rawWorldTarget, dynamicAlpha);
       }
 
-      // Draw Mini Hand Skeleton PIP Feedback with Pinch Distance Meter
-      drawHandSkeletonPIP(landmarks, thumbTip, indexTip, state.isPinching, pinchRatio);
+      // Draw both PIP skeleton and subtle live screen-space fingertip dots
+      drawHandSkeletonPIP(landmarks, thumbTip, indexTip, state.isPinching, smoothedPinchMetric);
+      drawFullscreenFingertipGuide(thumbTip, indexTip, state.isPinching);
       updateTrackingHUD();
+    }
+
+    function drawFullscreenFingertipGuide(thumbTip, indexTip, isPinching) {
+      const sw = handOverlayCanvas.width;
+      const sh = handOverlayCanvas.height;
+      const tx = thumbTip.x * sw;
+      const ty = thumbTip.y * sh;
+      const ix = indexTip.x * sw;
+      const iy = indexTip.y * sh;
+
+      // Subtle connecting line between thumb & index fingertips
+      handOverlayCtx.strokeStyle = isPinching ? 'rgba(16, 185, 129, 0.9)' : 'rgba(56, 189, 248, 0.55)';
+      handOverlayCtx.lineWidth = isPinching ? 3 : 1.5;
+      handOverlayCtx.beginPath();
+      handOverlayCtx.moveTo(tx, ty);
+      handOverlayCtx.lineTo(ix, iy);
+      handOverlayCtx.stroke();
+
+      // Fingertip target rings
+      [
+        { x: tx, y: ty },
+        { x: ix, y: iy }
+      ].forEach((pt) => {
+        handOverlayCtx.beginPath();
+        handOverlayCtx.arc(pt.x, pt.y, isPinching ? 8 : 6, 0, Math.PI * 2);
+        handOverlayCtx.fillStyle = isPinching ? 'rgba(16, 185, 129, 0.35)' : 'rgba(56, 189, 248, 0.25)';
+        handOverlayCtx.fill();
+        handOverlayCtx.lineWidth = 2;
+        handOverlayCtx.strokeStyle = isPinching ? '#10b981' : '#38bdf8';
+        handOverlayCtx.stroke();
+      });
     }
 
     function drawHandSkeletonPIP(landmarks, thumbTip, indexTip, isPinching, pinchRatio) {
@@ -1303,6 +1443,10 @@
     let webXRSupported = false;
     (async function checkARCapabilities() {
       if ('xr' in navigator) {
+    // Check WebXR Support on Load (Default to Back-Camera + Gyro AR so <video> always feeds MediaPipe!)
+    let webXRSupported = false;
+    (async function checkARCapabilities() {
+      if ('xr' in navigator) {
         try {
           webXRSupported = await navigator.xr.isSessionSupported('immersive-ar');
         } catch (e) {
@@ -1310,21 +1454,18 @@
         }
       }
 
+      capabilityBadge.innerHTML = '<span class="text-emerald-300 font-semibold">✓ Live Back-Camera Hand Pinch + Spatial 3D AR Ready</span>';
       if (webXRSupported) {
-        capabilityBadge.innerHTML = '<span class="text-emerald-300 font-semibold">✓ Full 6DOF WebXR World Tracking Ready</span> — Walk freely around 3D strokes';
-        btnLaunchSensorAR.classList.remove('hidden');
-      } else {
-        capabilityBadge.innerHTML = '<span class="text-cyan-300 font-semibold">✓ Back-Camera + Gyroscope AR Mode Ready</span>';
+        btnLaunchWebXR.classList.remove('hidden');
       }
     })();
 
     /**
-     * Launch Primary WebXR Session (with DOM Overlay & Optional Camera Access)
+     * Launch Experimental WebXR Session (Note: some Android devices lock the camera exclusively to WebXR)
      */
     async function launchWebXR() {
       try {
         initMediaPipeHands();
-        // Start background camera feed for MediaPipe hand landmark detection
         await startBackCameraStream();
 
         const session = await navigator.xr.requestSession('immersive-ar', {
@@ -1336,14 +1477,13 @@
         renderer.xr.setReferenceSpaceType('local');
         await renderer.xr.setSession(session);
 
-        // Hide HTML video element because WebXR composites the live back camera natively
         videoEl.style.opacity = '0';
 
         state.arMode = 'webxr';
         state.isRunning = true;
         trackingModeLabel.textContent = 'WebXR 6DOF AR';
         startScreen.classList.add('hidden');
-        showToast('Walk around freely! Pinch index & thumb to draw.');
+        showToast('WebXR active! If hand tracking pauses, use Sensor AR.');
 
         session.addEventListener('end', () => {
           state.isRunning = false;
@@ -1359,7 +1499,7 @@
     }
 
     /**
-     * Launch Fallback Back-Camera + Gyroscope AR Mode (iOS Safari / Non-WebXR Browsers)
+     * Launch Primary Back-Camera + Gyroscope AR Mode (Guaranteed 60fps Video Frames for Hand Pinch!)
      */
     async function launchSensorAR() {
       initMediaPipeHands();
@@ -1387,9 +1527,9 @@
       videoEl.style.opacity = '1';
       state.arMode = 'sensor';
       state.isRunning = true;
-      trackingModeLabel.textContent = 'Camera + Spatial Gyro';
+      trackingModeLabel.textContent = 'Back-Cam + Spatial 3D';
       startScreen.classList.add('hidden');
-      showToast('Pinch Index + Thumb or Hold Draw Button!');
+      showToast('Hold hand in view & touch Index + Thumb to draw!');
 
       renderer.setAnimationLoop(renderFrame);
     }
@@ -1471,15 +1611,8 @@
      * 8. UI EVENT LISTENERS & INTERACTIVE CONTROLS
      * ============================================================================
      */
-    btnLaunchAR.addEventListener('click', () => {
-      if (webXRSupported) {
-        launchWebXR();
-      } else {
-        launchSensorAR();
-      }
-    });
-
-    btnLaunchSensorAR.addEventListener('click', launchSensorAR);
+    btnLaunchAR.addEventListener('click', launchSensorAR);
+    btnLaunchWebXR.addEventListener('click', launchWebXR);
 
     // Color Swatches
     const swatchBtns = document.querySelectorAll('.swatch-btn');
@@ -1615,8 +1748,8 @@
     sliderPinchSens.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       state.pinchStartThreshold = val;
-      state.pinchReleaseThreshold = val + 0.14;
-      const tag = val >= 0.52 ? 'Easy' : val >= 0.40 ? 'Balanced' : 'Tight';
+      state.pinchReleaseThreshold = val + 0.16;
+      const tag = val >= 0.58 ? 'Super Easy' : val >= 0.46 ? 'Easy' : 'Tight';
       pinchSensLabel.textContent = `${tag} (${val.toFixed(2)})`;
     });
 
